@@ -429,13 +429,20 @@ chmod 666 "$LOGFILE"
 	# check for python dependencies
 	if ((hasInet == 1)); then
 		echo "install required python packages with '$PIP_BIN'..."
-		if "$PIP_BIN" install --upgrade --only-binary :all: -r "${OPENWBBASEDIR}/requirements.txt"; then
-			echo "done"
+		# First try with precompiled binaries (--prefer-binary)
+		if "$PIP_BIN" install --upgrade --prefer-binary -r "${OPENWBBASEDIR}/requirements.txt"; then
+			echo "Package installation completed successfully"
 		else
-			echo "failed!"
-			message="Bei der Installation der benötigten Python-Bibliotheken ist ein Fehler aufgetreten! Bitte die Logdateien prüfen."
-			payload=$(printf '{"source": "system", "type": "danger", "message": "%s", "timestamp": %d}' "$message" "$(date +"%s")")
-			mosquitto_pub -p 1886 -t "openWB/system/messages/$(date +"%s%3N")" -r -m "$payload"
+			echo "Some packages couldn't be installed with precompiled binaries, trying to build from source..."
+			# If that fails, try building from source
+			if "$PIP_BIN" install --upgrade -r "${OPENWBBASEDIR}/requirements.txt"; then
+				echo "Package installation completed successfully (built from source)"
+			else
+				echo "Package installation failed!"
+				message="Bei der Installation der benötigten Python-Bibliotheken ist ein Fehler aufgetreten! Bitte die Logdateien prüfen."
+				payload=$(printf '{"source": "system", "type": "danger", "message": "%s", "timestamp": %d}' "$message" "$(date +"%s")")
+				mosquitto_pub -p 1886 -t "openWB/system/messages/$(date +"%s%3N")" -r -m "$payload"
+			fi
 		fi
 	else
 		echo "no internet connection, skipping python package installation"
