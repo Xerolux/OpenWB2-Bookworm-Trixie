@@ -2,6 +2,10 @@
 OPENWBBASEDIR=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
 hasInet=0
 
+# Define custom Python paths for our Python 3.10 installation
+PYTHON_BIN="/usr/local/bin/python3"
+PIP_BIN="/usr/local/bin/pip3"
+
 # setup log file
 LOGFILE="${OPENWBBASEDIR}/ramdisk/main.log"
 touch "$LOGFILE"
@@ -55,6 +59,20 @@ chmod 666 "$LOGFILE"
 		echo "Re-running script ${BASH_SOURCE[0]} as user openwb"
 		exec sudo -u openwb bash "${BASH_SOURCE[0]}"
 		exit
+	fi
+
+	# First check if our custom Python is installed
+	if [ ! -f "$PYTHON_BIN" ]; then
+		echo "Custom Python 3.10 not found at $PYTHON_BIN"
+		echo "Please run the openwb-install.sh script to install Python 3.10"
+		echo "Continuing with system Python, but this may cause issues"
+		PYTHON_BIN=$(which python3)
+		PIP_BIN=$(which pip3)
+	else
+		echo "Using custom Python 3.10 installation at $PYTHON_BIN"
+		# Check Python version to confirm
+		PYTHON_VERSION=$($PYTHON_BIN --version)
+		echo "Python version: $PYTHON_VERSION"
 	fi
 
 	# check for rc.local bug
@@ -190,11 +208,19 @@ chmod 666 "$LOGFILE"
 	# check for openwb2 service definition
 	if find /etc/systemd/system/ -maxdepth 1 -name openwb2.service -type l | grep -q "."; then
 		echo "openwb2.service definition is already a symlink"
+		# Make sure the service is pointed to the right Python version
+		if grep -q "ExecStart=/usr/bin/python3" "/etc/systemd/system/openwb2.service"; then
+			echo "Updating Python path in openwb2.service"
+			sudo sed -i "s|ExecStart=/usr/bin/python3|ExecStart=$PYTHON_BIN|g" "${OPENWBBASEDIR}/data/config/openwb2.service"
+			sudo systemctl daemon-reload
+		fi
 	else
 		if find /etc/systemd/system/ -maxdepth 1 -name openwb2.service -type f | grep -q "."; then
 			echo "openwb2.service definition is a regular file, deleting file"
 			sudo rm "/etc/systemd/system/openwb2.service"
 		fi
+		# Update the service file to use our custom Python version
+		sudo sed -i "s|ExecStart=/usr/bin/python3|ExecStart=$PYTHON_BIN|g" "${OPENWBBASEDIR}/data/config/openwb2.service"
 		sudo ln -s "${OPENWBBASEDIR}/data/config/openwb2.service" /etc/systemd/system/openwb2.service
 		sudo systemctl daemon-reload
 		echo "openwb2.service definition updated. rebooting..."
@@ -204,6 +230,8 @@ chmod 666 "$LOGFILE"
 	# check for remote support service definition
 	if [ ! -f "/etc/systemd/system/openwbRemoteSupport.service" ]; then
 		echo "openwbRemoteSupport service missing, installing service"
+		# Update the service file to use our custom Python version
+		sudo sed -i "s|ExecStart=/usr/bin/python3|ExecStart=$PYTHON_BIN|g" "${OPENWBBASEDIR}/data/config/openwbRemoteSupport.service"
 		sudo cp "${OPENWBBASEDIR}/data/config/openwbRemoteSupport.service" "/etc/systemd/system/openwbRemoteSupport.service"
 		sudo systemctl daemon-reload
 		sudo systemctl enable openwbRemoteSupport
@@ -211,8 +239,18 @@ chmod 666 "$LOGFILE"
 	else
 		if versionMatch "${OPENWBBASEDIR}/data/config/openwbRemoteSupport.service" "/etc/systemd/system/openwbRemoteSupport.service"; then
 			echo "openwbRemoteSupport.service already up to date"
+			# Make sure the service is pointed to the right Python version
+			if grep -q "ExecStart=/usr/bin/python3" "/etc/systemd/system/openwbRemoteSupport.service"; then
+				echo "Updating Python path in openwbRemoteSupport.service"
+				sudo sed -i "s|ExecStart=/usr/bin/python3|ExecStart=$PYTHON_BIN|g" "${OPENWBBASEDIR}/data/config/openwbRemoteSupport.service"
+				sudo cp "${OPENWBBASEDIR}/data/config/openwbRemoteSupport.service" "/etc/systemd/system/openwbRemoteSupport.service"
+				sudo systemctl daemon-reload
+				sudo systemctl restart openwbRemoteSupport
+			fi
 		else
 			echo "updating openwbRemoteSupport.service"
+			# Update the service file to use our custom Python version
+			sudo sed -i "s|ExecStart=/usr/bin/python3|ExecStart=$PYTHON_BIN|g" "${OPENWBBASEDIR}/data/config/openwbRemoteSupport.service"
 			sudo cp "${OPENWBBASEDIR}/data/config/openwbRemoteSupport.service" "/etc/systemd/system/openwbRemoteSupport.service"
 			sudo systemctl daemon-reload
 			sudo systemctl enable openwbRemoteSupport
@@ -258,26 +296,39 @@ chmod 666 "$LOGFILE"
 	echo "displayDetected: $displayDetected"
 	mosquitto_pub -p 1886 -t "openWB/optional/int_display/detected" -r -m "$displayDetected"
 
-	# display setup
+	# display setup - adapted for Debian 12 LXDE/Openbox
 	echo "display setup..."
 	displaySetupModified=0
-	if [ ! -d "/home/openwb/.config/lxsession/LXDE" ]; then
-		mkdir --parents "/home/openwb/.config/lxsession/LXDE"
-	fi
+	
+	# Ensure config directories exist for LXDE and/or Openbox (Debian 12 structure)
+	for dir in "/home/openwb/.config/lxsession/LXDE" "/home/openwb/.config/openbox"; do
+		if [ ! -d "$dir" ]; then
+			mkdir --parents "$dir"
+			chown openwb:openwb "$dir"
+		fi
+	done
+	
+	# Check lightdm autologin config
 	if versionMatch "${OPENWBBASEDIR}/data/config/display/lightdm-autologin-greeter.conf" "/etc/lightdm/lightdm.conf.d/lightdm-autologin-greeter.conf"; then
 		echo "autologin configured"
 	else
 		echo "updating autologin"
+		sudo mkdir -p "/etc/lightdm/lightdm.conf.d"
 		sudo cp "${OPENWBBASEDIR}/data/config/display/lightdm-autologin-greeter.conf" "/etc/lightdm/lightdm.conf.d/lightdm-autologin-greeter.conf"
 		displaySetupModified=1
 	fi
+	
+	# Check mouse cursor config
 	if versionMatch "${OPENWBBASEDIR}/data/config/display/lightdm-hide-mouse-cursor.conf" "/etc/lightdm/lightdm.conf.d/lightdm-hide-mouse-cursor.conf"; then
 		echo "mouse cursor configured"
 	else
 		echo "updating mouse cursor configuration"
+		sudo mkdir -p "/etc/lightdm/lightdm.conf.d"
 		sudo cp "${OPENWBBASEDIR}/data/config/display/lightdm-hide-mouse-cursor.conf" "/etc/lightdm/lightdm.conf.d/lightdm-hide-mouse-cursor.conf"
 		displaySetupModified=1
 	fi
+	
+	# Check LXDE autostart
 	if versionMatch "${OPENWBBASEDIR}/data/config/display/lxdeautostart" "/home/openwb/.config/lxsession/LXDE/autostart"; then
 		echo "lxde session autostart already configured"
 	else
@@ -285,6 +336,7 @@ chmod 666 "$LOGFILE"
 		cp "${OPENWBBASEDIR}/data/config/display/lxdeautostart" "/home/openwb/.config/lxsession/LXDE/autostart"
 		displaySetupModified=1
 	fi
+	
 	if ((displaySetupModified == 1)); then
 		"${OPENWBBASEDIR}/runs/update_local_display.sh"
 	fi
@@ -306,6 +358,7 @@ chmod 666 "$LOGFILE"
 		echo "mosquitto openwb.conf already up to date"
 	else
 		echo "updating mosquitto openwb.conf"
+		sudo mkdir -p "/etc/mosquitto/conf.d"
 		sudo cp "${OPENWBBASEDIR}/data/config/mosquitto/openwb.conf" "/etc/mosquitto/conf.d/openwb.conf"
 		restartService=1
 	fi
@@ -318,6 +371,7 @@ chmod 666 "$LOGFILE"
 	fi
 	if [[ ! -f "/etc/mosquitto/certs/openwb.key" ]]; then
 		echo -n "copy ssl certs..."
+		sudo mkdir -p "/etc/mosquitto/certs"
 		sudo cp "/etc/ssl/certs/ssl-cert-snakeoil.pem" "/etc/mosquitto/certs/openwb.pem"
 		sudo cp "/etc/ssl/private/ssl-cert-snakeoil.key" "/etc/mosquitto/certs/openwb.key"
 		sudo chgrp mosquitto "/etc/mosquitto/certs/openwb.key"
@@ -355,6 +409,7 @@ chmod 666 "$LOGFILE"
 		echo "mosquitto openwb_local.conf already up to date"
 	else
 		echo "updating mosquitto openwb_local.conf"
+		sudo mkdir -p "/etc/mosquitto/conf_local.d"
 		sudo cp -a "${OPENWBBASEDIR}/data/config/mosquitto/openwb_local.conf" "/etc/mosquitto/conf_local.d/"
 		restartService=1
 	fi
@@ -373,8 +428,8 @@ chmod 666 "$LOGFILE"
 
 	# check for python dependencies
 	if ((hasInet == 1)); then
-		echo "install required python packages with 'pip3'..."
-		if pip3 install --upgrade --only-binary :all: -r "${OPENWBBASEDIR}/requirements.txt"; then
+		echo "install required python packages with '$PIP_BIN'..."
+		if "$PIP_BIN" install --upgrade --only-binary :all: -r "${OPENWBBASEDIR}/requirements.txt"; then
 			echo "done"
 		else
 			echo "failed!"
