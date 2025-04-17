@@ -20,13 +20,14 @@ show_warning() {
     echo "*******************************************************************"
     echo "* ACHTUNG / WARNING *"
     echo "*******************************************************************"
-    echo "* Sie möchten eine openWB-Installation auf einem nicht unterstützten *"
-    echo "* Betriebssystem durchführen. Dies ist eine openWB Community Edition *"
-    echo "* ohne Support und ohne Garantie auf Funktion. *"
+    echo "* Sie möchten eine openWB-Installation auf einem Betriebssystem      *"
+    echo "* durchführen, das nur eingeschränkt unterstützt wird. Dies ist eine *"
+    echo "* openWB Community Edition ohne Support und ohne Garantie auf        *"
+    echo "* Funktion.                                                         *"
     echo "* *"
-    echo "* You are about to install openWB on an unsupported operating system. *"
-    echo "* This is an openWB Community Edition without support or warranty of *"
-    echo "* functionality. *"
+    echo "* You are about to install openWB on an operating system with        *"
+    echo "* limited support. This is an openWB Community Edition without       *"
+    echo "* support or warranty of functionality.                              *"
     echo "*******************************************************************"
     echo ""
     read -p "Möchten Sie fortfahren? (ja/yes) " confirm
@@ -42,14 +43,18 @@ if [[ "$DEBIAN_VERSION" == "11" ]]; then
     USE_CUSTOM_PYTHON=false
     apt-get update
     apt-get install -y python3-pip
-elif [[ "$DEBIAN_VERSION" == "12" || "$DEBIAN_VERSION" == "13" ]]; then
-    echo "Debian 12 (Bookworm) oder 13 (Trixie) erkannt, baue Python 3.10"
+elif [[ "$DEBIAN_VERSION" == "12" ]]; then
+    echo "Debian 12 (Bookworm) erkannt, baue Python 3.10"
+    show_warning
     USE_CUSTOM_PYTHON=true
-    echo "Hinweis: Bookworm und Trixie werden unterstützt, es wird Python 3.10 installiert."
+elif [[ "$DEBIAN_VERSION" == "13" ]]; then
+    echo "Debian 13 (Trixie) erkannt, baue Python 3.10"
+    show_warning
+    USE_CUSTOM_PYTHON=true
 else
     echo "Nicht unterstützte Debian-Version: $DEBIAN_VERSION"
-    show_warning
-    USE_CUSTOM_PYTHON=false  # Oder true, je nach Bedarf
+    echo "Dieses Script unterstützt nur Debian 11 (Bullseye), 12 (Bookworm) oder 13 (Trixie)"
+    exit 1
 fi
 
 # Installationspakete über ein aktualisiertes Script installieren
