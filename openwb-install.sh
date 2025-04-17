@@ -2,103 +2,117 @@
 OPENWBBASEDIR=/var/www/html/openWB
 OPENWB_USER=openwb
 OPENWB_GROUP=openwb
-PYTHON_VERSION="3.10.13"  # Specific Python version for compatibility
+PYTHON_VERSION="3.10.13"  # Spezifische Python-Version für Kompatibilität
 
+# Prüfen, ob das Script als Root ausgeführt wird
 if (( $(id -u) != 0 )); then
-    echo "This script has to be run as user root or with sudo"
+    echo "Dieses Script muss als Benutzer Root oder mit sudo ausgeführt werden"
     exit 1
 fi
 
-echo "Installing openWB 2 into \"${OPENWBBASEDIR}\""
+echo "Installiere openWB 2 in \"${OPENWBBASEDIR}\""
 
-# Detect Debian version
+# Debian-Version erkennen
 DEBIAN_VERSION=$(cat /etc/debian_version | cut -d'.' -f1)
-if [[ "$DEBIAN_VERSION" == "12" ]]; then
-    echo "Detected Debian 12 (Bookworm)"
-elif [[ "$DEBIAN_VERSION" == "13" ]]; then
-    echo "Detected Debian 13 (Trixie)"
+
+# Bedingte Installation basierend auf der Debian-Version
+if [[ "$DEBIAN_VERSION" == "11" ]]; then
+    echo "Debian 11 (Bullseye) erkannt, verwende das System-Python"
+    USE_CUSTOM_PYTHON=false
+    apt-get update
+    apt-get install -y python3-pip
+elif [[ "$DEBIAN_VERSION" == "12" || "$DEBIAN_VERSION" == "13" ]]; then
+    echo "Debian 12 (Bookworm) oder 13 (Trixie) erkannt, baue Python 3.10"
+    USE_CUSTOM_PYTHON=true
+elif [[ "$DEBIAN_VERSION" == "10" ]]; then
+    echo "Debian 10 (Buster) wird nicht unterstützt!"
+    echo "Dieses Script ist nur für Debian 11 (Bullseye), 12 (Bookworm) oder 13 (Trixie) ausgelegt"
+    exit 1
 else
-    echo "Warning: This script is optimized for Debian 12 (Bookworm) or Debian 13 (Trixie). Proceed with caution."
+    echo "Nicht unterstützte Debian-Version: $DEBIAN_VERSION"
+    echo "Dieses Script ist für Debian 11 (Bullseye), 12 (Bookworm) oder 13 (Trixie) ausgelegt"
+    exit 1
 fi
 
-# Install packages using our updated script
+# Installationspakete über ein aktualisiertes Script installieren
 curl -s "https://raw.githubusercontent.com/Xerolux/OpenWB2-Bookworm-Trixie/master/runs/install_packages.sh" | bash -s
 if [ $? -ne 0 ]; then
-    echo "Trying local install_packages.sh..."
+    echo "Versuche lokales install_packages.sh..."
     bash ./install_packages.sh
 fi
 
-echo "Building and installing Python ${PYTHON_VERSION}..."
-# Create a temporary directory for Python compilation
-TEMP_DIR=$(mktemp -d)
-cd "$TEMP_DIR"
+# Python 3.10 nur für Bookworm und Trixie bauen
+if $USE_CUSTOM_PYTHON; then
+    echo "Baue und installiere Python ${PYTHON_VERSION}..."
+    TEMP_DIR=$(mktemp -d)
+    cd "$TEMP_DIR"
 
-# Download and extract Python source
-wget "https://www.python.org/ftp/python/${PYTHON_VERSION}/Python-${PYTHON_VERSION}.tgz"
-tar -xf "Python-${PYTHON_VERSION}.tgz"
-cd "Python-${PYTHON_VERSION}"
+    # Python-Quelle herunterladen und extrahieren
+    wget "https://www.python.org/ftp/python/${PYTHON_VERSION}/Python-${PYTHON_VERSION}.tgz"
+    tar -xf "Python-${PYTHON_VERSION}.tgz"
+    cd "Python-${PYTHON_VERSION}"
 
-# Configure and build Python
-./configure --enable-optimizations --with-ensurepip=install
-make -j $(nproc)
-make altinstall
+    # Python konfigurieren und bauen
+    ./configure --enable-optimizations --with-ensurepip=install
+    make -j $(nproc)
+    make altinstall
 
-# Cleanup
-cd /
-rm -rf "$TEMP_DIR"
+    # Aufräumen
+    cd /
+    rm -rf "$TEMP_DIR"
 
-# Create symlinks for the new Python version
-ln -sf "/usr/local/bin/python3.10" "/usr/local/bin/python3"
-ln -sf "/usr/local/bin/pip3.10" "/usr/local/bin/pip3"
+    # Symlinks für die neue Python-Version erstellen
+    ln -sf "/usr/local/bin/python3.10" "/usr/local/bin/python3"
+    ln -sf "/usr/local/bin/pip3.10" "/usr/local/bin/pip3"
 
-echo "Python ${PYTHON_VERSION} installed successfully"
+    echo "Python ${PYTHON_VERSION} erfolgreich installiert"
+fi
 
-echo "Create group $OPENWB_GROUP"
-# Will do nothing if group already exists:
+echo "Erstelle Gruppe $OPENWB_GROUP"
+# Macht nichts, wenn die Gruppe bereits existiert
 /usr/sbin/groupadd "$OPENWB_GROUP"
-echo "Done"
+echo "Fertig"
 
-echo "Create user $OPENWB_USER"
-# Will do nothing if user already exists:
+echo "Erstelle Benutzer $OPENWB_USER"
+# Macht nichts, wenn der Benutzer bereits existiert
 /usr/sbin/useradd "$OPENWB_USER" -g "$OPENWB_GROUP" --create-home
-echo "Done"
+echo "Fertig"
 
-# The user "openwb" is still new and we might need sudo in many places. Thus for now we give the user
-# unrestricted sudo. This should be restricted in the future
+# Sudo-Rechte für den Benutzer hinzufügen
 echo "$OPENWB_USER ALL=(ALL) NOPASSWD: ALL" > /etc/sudoers.d/openwb
 chmod 440 /etc/sudoers.d/openwb
-echo "Done"
+echo "Fertig"
 
-echo "Check for initial git clone..."
+echo "Prüfe initialen Git-Clone..."
 if [ ! -d "${OPENWBBASEDIR}/web" ]; then
     mkdir -p "$OPENWBBASEDIR"
     chown "$OPENWB_USER:$OPENWB_GROUP" "$OPENWBBASEDIR"
     sudo -u "$OPENWB_USER" git clone https://github.com/Xerolux/OpenWB2-Bookworm-Trixie.git --branch master "$OPENWBBASEDIR"
-    echo "Git cloned from user repository"
+    echo "Git aus dem Benutzer-Repository geklont"
 else
     echo "OK"
 fi
 
-echo -n "Check for ramdisk... "
+echo -n "Prüfe Ramdisk... "
 if grep -Fq "tmpfs ${OPENWBBASEDIR}/ramdisk" /etc/fstab; then
     echo "OK"
 else
     mkdir -p "${OPENWBBASEDIR}/ramdisk"
     sudo tee -a "/etc/fstab" <"${OPENWBBASEDIR}/data/config/ramdisk_config.txt" >/dev/null
     mount -a
-    echo "Created"
+    echo "Erstellt"
 fi
 
-echo -n "Check for crontab... "
+echo -n "Prüfe Crontab... "
 if [ ! -f /etc/cron.d/openwb ]; then
     cp "${OPENWBBASEDIR}/data/config/openwb.cron" /etc/cron.d/openwb
-    echo "Installed"
+    echo "Installiert"
 else
     echo "OK"
 fi
 
-# Check for mosquitto configuration
-echo "Updating mosquitto config file"
+# Mosquitto-Konfiguration
+echo "Aktualisiere Mosquitto-Konfigurationsdatei"
 systemctl stop mosquitto
 sleep 2
 cp -a "${OPENWBBASEDIR}/data/config/mosquitto/mosquitto.conf" /etc/mosquitto/mosquitto.conf
@@ -106,16 +120,15 @@ mkdir -p /etc/mosquitto/conf.d
 cp "${OPENWBBASEDIR}/data/config/mosquitto/openwb.conf" /etc/mosquitto/conf.d/openwb.conf
 cp "${OPENWBBASEDIR}/data/config/mosquitto/mosquitto.acl" /etc/mosquitto/mosquitto.acl
 
-# Create mosquitto certificates directory if it doesn't exist
 mkdir -p /etc/mosquitto/certs
 sudo cp /etc/ssl/certs/ssl-cert-snakeoil.pem /etc/mosquitto/certs/openwb.pem
 sudo cp /etc/ssl/private/ssl-cert-snakeoil.key /etc/mosquitto/certs/openwb.key
 sudo chgrp mosquitto /etc/mosquitto/certs/openwb.key
 systemctl start mosquitto
 
-# Check for mosquitto_local instance
+# Mosquitto_local Instanz
 if [ ! -f /etc/init.d/mosquitto_local ]; then
-    echo "Setting up mosquitto local instance"
+    echo "Richte lokale Mosquitto-Instanz ein"
     install -d -m 0755 -o root -g root /etc/mosquitto/conf_local.d/
     install -d -m 0755 -o mosquitto -g root /var/lib/mosquitto_local
     cp "${OPENWBBASEDIR}/data/config/mosquitto/mosquitto_local_init" /etc/init.d/mosquitto_local
@@ -130,70 +143,86 @@ fi
 cp -a "${OPENWBBASEDIR}/data/config/mosquitto/mosquitto_local.conf" /etc/mosquitto/mosquitto_local.conf
 cp -a "${OPENWBBASEDIR}/data/config/mosquitto/openwb_local.conf" /etc/mosquitto/conf_local.d/
 systemctl start mosquitto_local
-echo "Mosquitto done"
+echo "Mosquitto fertig"
 
-# Apache
-echo -n "Configuring Apache..."
+# Apache-Konfiguration
+echo -n "Konfiguriere Apache..."
 cp "${OPENWBBASEDIR}/data/config/apache/000-default.conf" "/etc/apache2/sites-available/"
 cp "${OPENWBBASEDIR}/index.html" /var/www/html/index.html
-echo "Done"
+echo "Fertig"
 
-echo -n "Fixing upload limit..."
-# For Debian 12 (Bookworm) which uses PHP 8.2 or Debian 13 (Trixie) which may use PHP 8.3
-if [ -d "/etc/php/8.3/" ]; then
-    echo "upload_max_filesize = 300M" > /etc/php/8.3/apache2/conf.d/20-uploadlimit.ini
-    echo "post_max_size = 300M" >> /etc/php/8.3/apache2/conf.d/20-uploadlimit.ini
-    echo "Done (OS Trixie - PHP 8.3)"
+echo -n "Passe Upload-Limit an..."
+if [ -d "/etc/php/7.3/" ]; then
+    echo "upload_max_filesize = 300M" > /etc/php/7.3/apache2/conf.d/20-uploadlimit.ini
+    echo "post_max_size = 300M" >> /etc/php/7.3/apache2/conf.d/20-uploadlimit.ini
+    echo "Fertig (PHP 7.3 - OS Buster)"
+elif [ -d "/etc/php/7.4/" ]; then
+    echo "upload_max_filesize = 300M" > /etc/php/7.4/apache2/conf.d/20-uploadlimit.ini
+    echo "post_max_size = 300M" >> /etc/php/7.4/apache2/conf.d/20-uploadlimit.ini
+    echo "Fertig (PHP 7.4 - OS Bullseye)"
 elif [ -d "/etc/php/8.2/" ]; then
     echo "upload_max_filesize = 300M" > /etc/php/8.2/apache2/conf.d/20-uploadlimit.ini
     echo "post_max_size = 300M" >> /etc/php/8.2/apache2/conf.d/20-uploadlimit.ini
-    echo "Done (OS Bookworm - PHP 8.2)"
+    echo "Fertig (PHP 8.2 - OS Bookworm)"
+elif [ -d "/etc/php/8.3/" ]; then
+    echo "upload_max_filesize = 300M" > /etc/php/8.3/apache2/conf.d/20-uploadlimit.ini
+    echo "post_max_size = 300M" >> /etc/php/8.3/apache2/conf.d/20-uploadlimit.ini
+    echo "Fertig (PHP 8.3 - OS Trixie)"
+elif [ -d "/etc/php/8.4/" ]; then
+    echo "upload_max_filesize = 300M" > /etc/php/8.4/apache2/conf.d/20-uploadlimit.ini
+    echo "post_max_size = 300M" >> /etc/php/8.4/apache2/conf.d/20-uploadlimit.ini
+    echo "Fertig (PHP 8.4)"
 else
-    # Try to find any PHP version
-    PHP_VER=$(find /etc/php -maxdepth 1 -type d | grep -oP '\d+\.\d+' | sort -r | head -n1)
-    if [ -n "$PHP_VER" ]; then
-        echo "upload_max_filesize = 300M" > "/etc/php/$PHP_VER/apache2/conf.d/20-uploadlimit.ini"
-        echo "post_max_size = 300M" >> "/etc/php/$PHP_VER/apache2/conf.d/20-uploadlimit.ini"
-        echo "Done (PHP $PHP_VER)"
-    else
-        echo "No PHP version found, skipping upload limit configuration"
-    fi
+    echo "Keine unterstützte PHP-Version gefunden, überspringe Upload-Limit-Konfiguration"
 fi
 
-echo -n "Enabling Apache SSL module..."
+echo -n "Aktiviere Apache SSL-Modul..."
 a2enmod ssl
 a2enmod proxy_wstunnel
 a2dissite default-ssl 2>/dev/null || true
 cp "${OPENWBBASEDIR}/data/config/apache/apache-openwb-ssl.conf" /etc/apache2/sites-available/
 a2ensite apache-openwb-ssl
-echo "Done"
+echo "Fertig"
 
-echo -n "Restarting Apache..."
+echo -n "Starte Apache neu..."
 systemctl restart apache2
-echo "Done"
+echo "Fertig"
 
-echo "Installing Python requirements with our custom Python version..."
-PATH="/usr/local/bin:$PATH" pip3 install --upgrade pip
-PATH="/usr/local/bin:$PATH" sudo -u "$OPENWB_USER" pip3 install -r "${OPENWBBASEDIR}/requirements.txt"
+# Python-Pfad und Executable basierend auf der Version festlegen
+if $USE_CUSTOM_PYTHON; then
+    PYTHON_PATH="/usr/local/bin"
+    PYTHON_EXEC="/usr/local/bin/python3"
+    echo "Installiere Python-Anforderungen mit benutzerdefiniertem Python ${PYTHON_VERSION}..."
+else
+    PYTHON_PATH="/usr/bin"
+    PYTHON_EXEC="/usr/bin/python3"
+    echo "Installiere Python-Anforderungen mit System-Python..."
+fi
 
-echo "Installing openWB2 system service..."
-# Update the service file to use our custom Python version
-sed -i 's|ExecStart=.*|ExecStart=/usr/local/bin/python3 -m openWB.run|' "${OPENWBBASEDIR}/data/config/openwb2.service"
+# Python-Anforderungen installieren
+PATH="$PYTHON_PATH:$PATH" pip3 install --upgrade pip
+sudo -u "$OPENWB_USER" PATH="$PYTHON_PATH:$PATH" pip3 install -r "${OPENWBBASEDIR}/requirements.txt"
+
+echo "Installiere openWB2-Systemdienst..."
+# Dienstdatei mit der passenden Python-Version aktualisieren
+sed -i "s|ExecStart=.*|ExecStart=$PYTHON_EXEC -m openWB.run|" "${OPENWBBASEDIR}/data/config/openwb2.service"
 ln -sf "${OPENWBBASEDIR}/data/config/openwb2.service" /etc/systemd/system/openwb2.service
 systemctl daemon-reload
 systemctl enable openwb2
 
-echo "Installing openWB2 remote support service..."
-# Update the service file to use our custom Python version if necessary
-sed -i 's|ExecStart=.*python|ExecStart=/usr/local/bin/python3|' "${OPENWBBASEDIR}/data/config/openwbRemoteSupport.service"
+echo "Installiere openWB2-Remote-Support-Dienst..."
+# Dienstdatei mit der passenden Python-Version aktualisieren
+sed -i "s|ExecStart=.*python|ExecStart=$PYTHON_EXEC|" "${OPENWBBASEDIR}/data/config/openwbRemoteSupport.service"
 cp "${OPENWBBASEDIR}/data/config/openwbRemoteSupport.service" /etc/systemd/system/openwbRemoteSupport.service
 systemctl daemon-reload
 systemctl enable openwbRemoteSupport
 systemctl start openwbRemoteSupport
 
-echo "Installation finished, now starting openWB2 service..."
+echo "Installation abgeschlossen, starte jetzt den openWB2-Dienst..."
 systemctl start openwb2
 
-echo "All done!"
-echo "If you want to use this installation for development, add a password for user 'openwb' using: sudo passwd openwb"
-echo "Python ${PYTHON_VERSION} has been installed specifically for openWB compatibility"
+echo "Alles fertig!"
+echo "Falls Sie diese Installation für Entwicklungsarbeiten nutzen möchten, setzen Sie ein Passwort für den Benutzer 'openwb' mit: sudo passwd openwb"
+if $USE_CUSTOM_PYTHON; then
+    echo "Python ${PYTHON_VERSION} wurde speziell für openWB-Kompatibilität installiert"
+fi
