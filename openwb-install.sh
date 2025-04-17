@@ -14,16 +14,28 @@ echo "Installiere openWB 2 in \"${OPENWBBASEDIR}\""
 
 # Debian-Version erkennen und prüfen auf sid/trixie
 DEBIAN_VERSION_RAW=$(cat /etc/debian_version)
+echo "Gefundene Debian-Version: $DEBIAN_VERSION_RAW"
+
+# Direkte Erkennung von "trixie/sid" oder anderen Varianten
+if [[ "$DEBIAN_VERSION_RAW" == "trixie/sid" ]] || [[ "$DEBIAN_VERSION_RAW" == "sid/trixie" ]]; then
+    DEBIAN_VERSION="13"
+    echo "Debian Trixie/Sid explizit erkannt, wird als Version 13 behandelt"
 # Falls die Version eine reine Zahl ist, nehmen wir sie
-if [[ "$DEBIAN_VERSION_RAW" =~ ^[0-9]+$ ]]; then
+elif [[ "$DEBIAN_VERSION_RAW" =~ ^[0-9]+$ ]]; then
     DEBIAN_VERSION=$DEBIAN_VERSION_RAW
-# Falls "sid" oder "trixie" im String enthalten ist, behandeln wir es als Debian 13
-elif [[ "$DEBIAN_VERSION_RAW" == *"sid"* ]] || [[ "$DEBIAN_VERSION_RAW" == *"trixie"* ]]; then
+# Falls "sid" oder "trixie" im String enthalten ist (case-insensitive), behandeln wir es als Debian 13
+elif [[ "${DEBIAN_VERSION_RAW,,}" == *"sid"* ]] || [[ "${DEBIAN_VERSION_RAW,,}" == *"trixie"* ]]; then
     DEBIAN_VERSION="13"
     echo "Debian Sid/Trixie erkannt, wird als Version 13 behandelt"
 # Ansonsten nehmen wir die erste Zahl aus dem String
 else
-    DEBIAN_VERSION=$(echo "$DEBIAN_VERSION_RAW" | cut -d'.' -f1)
+    DEBIAN_VERSION=$(echo "$DEBIAN_VERSION_RAW" | grep -o -E '[0-9]+' | head -1)
+    # Falls keine Zahl gefunden wurde, behandeln wir es als unbekannte Version
+    if [[ -z "$DEBIAN_VERSION" ]]; then
+        echo "Warnung: Keine Versionsnummer in '$DEBIAN_VERSION_RAW' gefunden"
+        # Setzen wir einen leeren Wert, damit die spätere Prüfung fehlschlägt
+        DEBIAN_VERSION=""
+    fi
 fi
 
 # Funktion zur Anzeige der Warnung und Abfrage der Bestätigung
@@ -63,9 +75,20 @@ elif [[ "$DEBIAN_VERSION" == "13" ]]; then
     show_warning
     USE_CUSTOM_PYTHON=true
 else
-    echo "Nicht unterstützte Debian-Version: $DEBIAN_VERSION_RAW"
+    echo "Nicht unterstützte Debian-Version: $DEBIAN_VERSION_RAW (erkannt als: $DEBIAN_VERSION)"
     echo "Dieses Script unterstützt nur Debian 11 (Bullseye), 12 (Bookworm) oder 13 (Trixie)"
-    exit 1
+    echo ""
+    echo "Falls Sie Debian Trixie/Sid verwenden, sollte dieses Script es erkennen."
+    echo "Wenn Sie fortfahren möchten, geben Sie 'yes' ein:"
+    read -p "Fortfahren? (yes/no) " force_continue
+    if [[ "$force_continue" == "yes" ]]; then
+        echo "Fahre fort mit Installation für Debian Trixie/Sid..."
+        DEBIAN_VERSION="13"
+        USE_CUSTOM_PYTHON=true
+        show_warning
+    else
+        exit 1
+    fi
 fi
 
 # Rest des Scripts bleibt unverändert...
