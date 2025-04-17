@@ -15,6 +15,27 @@ echo "Installiere openWB 2 in \"${OPENWBBASEDIR}\""
 # Debian-Version erkennen
 DEBIAN_VERSION=$(cat /etc/debian_version | cut -d'.' -f1)
 
+# Funktion zur Anzeige der Warnung und Abfrage der Bestätigung
+show_warning() {
+    echo "*******************************************************************"
+    echo "* ACHTUNG / WARNING *"
+    echo "*******************************************************************"
+    echo "* Sie möchten eine openWB-Installation auf einem nicht unterstützten *"
+    echo "* Betriebssystem durchführen. Dies ist eine openWB Community Edition *"
+    echo "* ohne Support und ohne Garantie auf Funktion. *"
+    echo "* *"
+    echo "* You are about to install openWB on an unsupported operating system. *"
+    echo "* This is an openWB Community Edition without support or warranty of *"
+    echo "* functionality. *"
+    echo "*******************************************************************"
+    echo ""
+    read -p "Möchten Sie fortfahren? (ja/yes) " confirm
+    if [[ "$confirm" != "ja" && "$confirm" != "yes" ]]; then
+        echo "Installation abgebrochen."
+        exit 1
+    fi
+}
+
 # Bedingte Installation basierend auf der Debian-Version
 if [[ "$DEBIAN_VERSION" == "11" ]]; then
     echo "Debian 11 (Bullseye) erkannt, verwende das System-Python"
@@ -24,14 +45,11 @@ if [[ "$DEBIAN_VERSION" == "11" ]]; then
 elif [[ "$DEBIAN_VERSION" == "12" || "$DEBIAN_VERSION" == "13" ]]; then
     echo "Debian 12 (Bookworm) oder 13 (Trixie) erkannt, baue Python 3.10"
     USE_CUSTOM_PYTHON=true
-elif [[ "$DEBIAN_VERSION" == "10" ]]; then
-    echo "Debian 10 (Buster) wird nicht unterstützt!"
-    echo "Dieses Script ist nur für Debian 11 (Bullseye), 12 (Bookworm) oder 13 (Trixie) ausgelegt"
-    exit 1
+    echo "Hinweis: Bookworm und Trixie werden unterstützt, es wird Python 3.10 installiert."
 else
     echo "Nicht unterstützte Debian-Version: $DEBIAN_VERSION"
-    echo "Dieses Script ist für Debian 11 (Bullseye), 12 (Bookworm) oder 13 (Trixie) ausgelegt"
-    exit 1
+    show_warning
+    USE_CUSTOM_PYTHON=false  # Oder true, je nach Bedarf
 fi
 
 # Installationspakete über ein aktualisiertes Script installieren
