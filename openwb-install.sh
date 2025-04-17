@@ -53,14 +53,21 @@ show_warning() {
     echo "* support or warranty of functionality.                              *"
     echo "*******************************************************************"
     echo ""
-    echo "Um fortzufahren, geben Sie bitte 'ja' oder 'yes' ein (ohne Anführungszeichen)."
-    echo "To continue, please enter 'ja' or 'yes' (without quotes)."
-    echo ""
-    read -p "Möchten Sie fortfahren? (ja/yes) " confirm
-    if [[ "$confirm" != "ja" && "$confirm" != "yes" ]]; then
-        echo "Installation abgebrochen."
-        exit 1
+    
+    if [[ "$AUTO_ACCEPT" == "true" ]]; then
+        echo "Auto-Akzeptierung für Trixie/Sid aktiviert - überspringe Bestätigung."
+        echo "Auto-acceptance enabled for Trixie/Sid - skipping confirmation."
+    else
+        echo "Um fortzufahren, geben Sie bitte 'ja' oder 'yes' ein (ohne Anführungszeichen)."
+        echo "To continue, please enter 'ja' or 'yes' (without quotes)."
+        echo ""
+        read -p "Möchten Sie fortfahren? (ja/yes) " confirm
+        if [[ "$confirm" != "ja" && "$confirm" != "yes" ]]; then
+            echo "Installation abgebrochen."
+            exit 1
+        fi
     fi
+    
     echo "Fortfahren mit der Installation..."
 }
 
