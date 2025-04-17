@@ -22,7 +22,7 @@ else
 fi
 
 # Install packages using our updated script
-curl -s "https://raw.githubusercontent.com/Xerolux/core/master/runs/install_packages.sh" | bash -s
+curl -s "https://raw.githubusercontent.com/Xerolux/OpenWB2-Bookworm-Trixie/master/runs/install_packages.sh" | bash -s
 if [ $? -ne 0 ]; then
     echo "Trying local install_packages.sh..."
     bash ./install_packages.sh
@@ -73,7 +73,7 @@ echo "Check for initial git clone..."
 if [ ! -d "${OPENWBBASEDIR}/web" ]; then
     mkdir -p "$OPENWBBASEDIR"
     chown "$OPENWB_USER:$OPENWB_GROUP" "$OPENWBBASEDIR"
-    sudo -u "$OPENWB_USER" git clone https://github.com/Xerolux/core.git --branch master "$OPENWBBASEDIR"
+    sudo -u "$OPENWB_USER" git clone https://github.com/Xerolux/OpenWB2-Bookworm-Trixie.git --branch master "$OPENWBBASEDIR"
     echo "Git cloned from user repository"
 else
     echo "OK"
@@ -164,7 +164,7 @@ echo -n "Enabling Apache SSL module..."
 a2enmod ssl
 a2enmod proxy_wstunnel
 a2dissite default-ssl 2>/dev/null || true
-cp "${OPENWBBASEDIR}/data/config/apache/apache-openwb-ssl.conf" /etc/apache2/sites-available/ 
+cp "${OPENWBBASEDIR}/data/config/apache/apache-openwb-ssl.conf" /etc/apache2/sites-available/
 a2ensite apache-openwb-ssl
 echo "Done"
 
