@@ -12,8 +12,19 @@ fi
 
 echo "Installiere openWB 2 in \"${OPENWBBASEDIR}\""
 
-# Debian-Version erkennen
-DEBIAN_VERSION=$(cat /etc/debian_version | cut -d'.' -f1)
+# Debian-Version erkennen und prüfen auf sid/trixie
+DEBIAN_VERSION_RAW=$(cat /etc/debian_version)
+# Falls die Version eine reine Zahl ist, nehmen wir sie
+if [[ "$DEBIAN_VERSION_RAW" =~ ^[0-9]+$ ]]; then
+    DEBIAN_VERSION=$DEBIAN_VERSION_RAW
+# Falls "sid" oder "trixie" im String enthalten ist, behandeln wir es als Debian 13
+elif [[ "$DEBIAN_VERSION_RAW" == *"sid"* ]] || [[ "$DEBIAN_VERSION_RAW" == *"trixie"* ]]; then
+    DEBIAN_VERSION="13"
+    echo "Debian Sid/Trixie erkannt, wird als Version 13 behandelt"
+# Ansonsten nehmen wir die erste Zahl aus dem String
+else
+    DEBIAN_VERSION=$(echo "$DEBIAN_VERSION_RAW" | cut -d'.' -f1)
+fi
 
 # Funktion zur Anzeige der Warnung und Abfrage der Bestätigung
 show_warning() {
@@ -52,11 +63,12 @@ elif [[ "$DEBIAN_VERSION" == "13" ]]; then
     show_warning
     USE_CUSTOM_PYTHON=true
 else
-    echo "Nicht unterstützte Debian-Version: $DEBIAN_VERSION"
+    echo "Nicht unterstützte Debian-Version: $DEBIAN_VERSION_RAW"
     echo "Dieses Script unterstützt nur Debian 11 (Bullseye), 12 (Bookworm) oder 13 (Trixie)"
     exit 1
 fi
 
+# Rest des Scripts bleibt unverändert...
 # Installationspakete über ein aktualisiertes Script installieren
 curl -s "https://raw.githubusercontent.com/Xerolux/OpenWB2-Bookworm-Trixie/master/runs/install_packages.sh" | bash -s
 if [ $? -ne 0 ]; then
