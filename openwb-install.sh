@@ -302,21 +302,26 @@ fi
 
 # Python-Anforderungen installieren
 echo "Aktualisiere pip..."
-PATH="$PYTHON_PATH:$PATH" $PIP_EXEC install --upgrade pip
+sudo -u "$OPENWB_USER" PATH="$PYTHON_PATH:$PATH" $PIP_EXEC install --upgrade pip
 
 echo "Installiere Python-Abhängigkeiten..."
+# Prüfe, ob requirements.txt existiert
+if [ ! -f "${OPENWBBASEDIR}/requirements.txt" ]; then
+    echo "Fehler: requirements.txt nicht gefunden in ${OPENWBBASEDIR}"
+    exit 1
+fi
+
 if [[ "$DEBIAN_VERSION" == "12" || "$DEBIAN_VERSION" == "13" || "$DEBIAN_VERSION" == "unstable" ]]; then
     echo "Für Debian $DEBIAN_VERSION: Installiere Abhängigkeiten aus requirements.txt zusammen mit der neuesten Version von jq..."
-    # Erstelle eine temporäre requirements-Liste, die jq ohne Versionsangabe enthält
-    TEMP_REQ=$(mktemp)
-    grep -v '^jq' "${OPENWBBASEDIR}/requirements.txt" > "$TEMP_REQ"  # Entferne jq aus requirements.txt (falls vorhanden)
-    echo "jq" >> "$TEMP_REQ"  # Füge jq ohne Versionsangabe hinzu, um die neueste Version zu installieren
-    chmod 644 "$TEMP_REQ"  # Stelle sicher, dass die Datei für openwb lesbar ist
-    sudo -u "$OPENWB_USER" PATH="$PYTHON_PATH:$PATH" sudo $PIP_EXEC install -r "$TEMP_REQ"
+    # Erstelle eine temporäre requirements-Liste im Home-Verzeichnis von openwb
+    TEMP_REQ="/home/$OPENWB_USER/temp_requirements.txt"
+    sudo -u "$OPENWB_USER" bash -c "grep -v '^jq' ${OPENWBBASEDIR}/requirements.txt > $TEMP_REQ"
+    sudo -u "$OPENWB_USER" bash -c "echo 'jq' >> $TEMP_REQ"
+    sudo -u "$OPENWB_USER" PATH="$PYTHON_PATH:$PATH" $PIP_EXEC install --user -r "$TEMP_REQ"
     rm -f "$TEMP_REQ"
 else
     echo "Installiere Abhängigkeiten aus requirements.txt..."
-    sudo -u "$OPENWB_USER" PATH="$PYTHON_PATH:$PATH" sudo $PIP_EXEC install -r "${OPENWBBASEDIR}/requirements.txt"
+    sudo -u "$OPENWB_USER" PATH="$PYTHON_PATH:$PATH" $PIP_EXEC install --user -r "${OPENWBBASEDIR}/requirements.txt"
 fi
 
 echo "Installiere openWB2-Systemdienst..."
