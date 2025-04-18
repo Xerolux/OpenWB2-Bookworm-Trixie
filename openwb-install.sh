@@ -2,7 +2,7 @@
 OPENWBBASEDIR=/var/www/html/openWB
 OPENWB_USER=openwb
 OPENWB_GROUP=openwb
-PYTHON_VERSION="3.10.13"  # Spezifische Python-Version für Kompatibilität
+VENV_DIR="${OPENWBBASEDIR}/venv"
 
 # Prüfen, ob das Script als Root ausgeführt wird
 if (( $(id -u) != 0 )); then
@@ -78,8 +78,15 @@ fi
 
 echo "Erkannte Debian-Version: $DEBIAN_VERSION (Codename: $DEBIAN_CODENAME)"
 
-# Zusätzliche Build-Tools für Debian 12, 13 und 14 installieren
-if [[ "$DEBIAN_VERSION" == "12" || "$DEBIAN_VERSION" == "13" || "$DEBIAN_VERSION" == "14" ]]; then
+# Setze USE_VENV basierend auf der Debian-Version
+if [[ "$DEBIAN_VERSION" == "12" || "$DEBIAN_VERSION" == "13" || "$DEBIAN_VERSION" == "unstable" ]]; then
+    USE_VENV=true
+else
+    USE_VENV=false
+fi
+
+# Installiere zusätzliche Build-Tools für Debian 12, 13 und unstable
+if [[ "$DEBIAN_VERSION" == "12" || "$DEBIAN_VERSION" == "13" || "$DEBIAN_VERSION" == "unstable" ]]; then
     echo "Installiere zusätzliche Build-Tools für Debian $DEBIAN_VERSION..."
     apt-get update
     apt-get install -y autoconf automake build-essential libtool
@@ -109,28 +116,9 @@ show_warning() {
     sleep 10
 }
 
-# Bedingte Installation basierend auf der Debian-Version
-if [[ "$DEBIAN_VERSION" == "11" ]]; then
-    echo "Debian 11 (Bullseye) erkannt, verwende das System-Python"
-    USE_CUSTOM_PYTHON=false
-    apt-get update
-    apt-get install -y python3-pip
-elif [[ "$DEBIAN_VERSION" == "12" ]]; then
-    echo "Debian 12 (Bookworm) erkannt, baue Python 3.10"
+# Zeige Warnung für Debian 12, 13 und unstable
+if [[ "$DEBIAN_VERSION" == "12" || "$DEBIAN_VERSION" == "13" || "$DEBIAN_VERSION" == "unstable" ]]; then
     show_warning
-    USE_CUSTOM_PYTHON=true
-elif [[ "$DEBIAN_VERSION" == "13" ]]; then
-    echo "Debian 13 (Trixie) erkannt, baue Python 3.10"
-    show_warning
-    USE_CUSTOM_PYTHON=true
-elif [[ "$DEBIAN_VERSION" == "unstable" ]]; then
-    echo "Debian Unstable (Sid) erkannt, baue Python 3.10 (experimentell)"
-    show_warning
-    USE_CUSTOM_PYTHON=true
-else
-    echo "Nicht unterstützte Debian-Version: $DEBIAN_VERSION (Codename: $DEBIAN_CODENAME)"
-    echo "Dieses Script unterstützt nur Debian 11 (Bullseye), 12 (Bookworm), 13 (Trixie) oder Unstable (Sid)"
-    exit 1
 fi
 
 # Installationspakete über ein aktualisiertes Script installieren
@@ -140,36 +128,18 @@ if [ $? -ne 0 ]; then
     bash ./install_packages.sh
 fi
 
-# Python 3.10 nur für Bookworm, Trixie und Sid bauen, falls nicht bereits installiert
-if $USE_CUSTOM_PYTHON; then
-    PYTHON_BINARY="/usr/local/bin/python${PYTHON_VERSION%.*}"  # z. B. /usr/local/bin/python3.10
-    if [ -x "$PYTHON_BINARY" ] && "$PYTHON_BINARY" --version | grep -q "$PYTHON_VERSION"; then
-        echo "Python ${PYTHON_VERSION} ist bereits installiert, überspringe Installation."
-    else
-        echo "Baue und installiere Python ${PYTHON_VERSION}..."
-        TEMP_DIR=$(mktemp -d)
-        cd "$TEMP_DIR"
-
-        # Python-Quelle herunterladen und extrahieren
-        wget "https://www.python.org/ftp/python/${PYTHON_VERSION}/Python-${PYTHON_VERSION}.tgz"
-        tar -xf "Python-${PYTHON_VERSION}.tgz"
-        cd "Python-${PYTHON_VERSION}"
-
-        # Python konfigurieren und bauen
-        ./configure --enable-optimizations --with-ensurepip=install
-        make -j $(nproc)
-        make altinstall
-
-        # Aufräumen
-        cd /
-        rm -rf "$TEMP_DIR"
-
-        # Symlinks für die neue Python-Version erstellen
-        ln -sf "/usr/local/bin/python${PYTHON_VERSION%.*}" "/usr/local/bin/python3"
-        ln -sf "/usr/local/bin/pip${PYTHON_VERSION%.*}" "/usr/local/bin/pip3"
-
-        echo "Python ${PYTHON_VERSION} erfolgreich installiert"
+# Setze PYTHON_EXEC und PIP_EXEC
+if $USE_VENV; then
+    if [ ! -d "$VENV_DIR" ]; then
+        echo "Erstelle virtuelle Umgebung in ${VENV_DIR}..."
+        sudo -u "$OPENWB_USER" /usr/bin/python3 -m venv "$VENV_DIR"
+        echo "Virtuelle Umgebung erstellt."
     fi
+    PYTHON_EXEC="$VENV_DIR/bin/python"
+    PIP_EXEC="$VENV_DIR/bin/pip"
+else
+    PYTHON_EXEC="/usr/bin/python3"
+    PIP_EXEC="/usr/bin/pip3"
 fi
 
 echo "Erstelle Gruppe $OPENWB_GROUP"
@@ -292,22 +262,13 @@ echo -n "Starte Apache neu..."
 systemctl restart apache2
 echo "Fertig"
 
-# Python-Pfad und Executable basierend auf der Version festlegen
-if $USE_CUSTOM_PYTHON; then
-    PYTHON_PATH="/usr/local/bin"
-    PYTHON_EXEC="/usr/local/bin/python3"
-    PIP_EXEC="/usr/local/bin/pip3"
-    echo "Installiere Python-Anforderungen mit benutzerdefiniertem Python ${PYTHON_VERSION}..."
-else
-    PYTHON_PATH="/usr/bin"
-    PYTHON_EXEC="/usr/bin/python3"
-    PIP_EXEC="/usr/bin/pip3"
-    echo "Installiere Python-Anforderungen mit System-Python..."
-fi
-
 # Python-Anforderungen installieren
 echo "Aktualisiere pip..."
-sudo -u "$OPENWB_USER" PATH="$PYTHON_PATH:$PATH" $PIP_EXEC install --upgrade pip
+if $USE_VENV; then
+    sudo -u "$OPENWB_USER" "$PIP_EXEC" install --upgrade pip
+else
+    sudo -u "$OPENWB_USER" "$PIP_EXEC" install --user --upgrade pip
+fi
 
 echo "Installiere Python-Abhängigkeiten..."
 # Prüfe, ob requirements.txt existiert
@@ -316,44 +277,19 @@ if [ ! -f "${OPENWBBASEDIR}/requirements.txt" ]; then
     exit 1
 fi
 
-if [[ "$DEBIAN_VERSION" == "12" || "$DEBIAN_VERSION" == "13" || "$DEBIAN_VERSION" == "unstable" ]]; then
-    echo "Für Debian $DEBIAN_VERSION: Installiere Abhängigkeiten aus requirements.txt zusammen mit der neuesten Version von jq..."
-    # Erstelle eine temporäre requirements-Liste im Home-Verzeichnis von openwb
-    TEMP_REQ="/home/$OPENWB_USER/temp_requirements.txt"
-    sudo -u "$OPENWB_USER" bash -c "grep -v '^jq' ${OPENWBBASEDIR}/requirements.txt > $TEMP_REQ"
-    sudo -u "$OPENWB_USER" bash -c "echo 'jq' >> $TEMP_REQ"
-    # Debugging: Zeige den Inhalt der temporären Datei
-    echo "Inhalt der temporären requirements.txt:"
-    sudo -u "$OPENWB_USER" cat "$TEMP_REQ"
-    # Installiere die Abhängigkeiten
-    sudo -u "$OPENWB_USER" PATH="$PYTHON_PATH:$PATH" $PIP_EXEC install --user -r "$TEMP_REQ"
-    # Prüfe, ob jq installiert wurde
-    if ! sudo -u "$OPENWB_USER" PATH="$PYTHON_PATH:$PATH" $PIP_EXEC show jq > /dev/null; then
-        echo "Fehler: Python-Paket jq konnte nicht installiert werden"
-        # Versuche, jq separat zu installieren, um den Fehler zu identifizieren
-        echo "Versuche, jq separat zu installieren..."
-        sudo -u "$OPENWB_USER" PATH="$PYTHON_PATH:$PATH" $PIP_EXEC install --user jq
-        if [ $? -ne 0 ]; then
-            echo "Fehler: Installation von jq fehlgeschlagen"
-            exit 1
-        fi
-    fi
-    rm -f "$TEMP_REQ"
+if $USE_VENV; then
+    sudo -u "$OPENWB_USER" "$PIP_EXEC" install -r "${OPENWBBASEDIR}/requirements.txt"
 else
-    echo "Installiere Abhängigkeiten aus requirements.txt..."
-    sudo -u "$OPENWB_USER" PATH="$PYTHON_PATH:$PATH" $PIP_EXEC install --user -r "${OPENWBBASEDIR}/requirements.txt"
-    # Prüfe, ob jq installiert wurde
-    if ! sudo -u "$OPENWB_USER" PATH="$PYTHON_PATH:$PATH" $PIP_EXEC show jq > /dev/null; then
-        echo "Fehler: Python-Paket jq konnte nicht installiert werden"
-        exit 1
-    fi
+    sudo -u "$OPENWB_USER" "$PIP_EXEC" install --user -r "${OPENWBBASEDIR}/requirements.txt"
 fi
 
 echo "Installiere openWB2-Systemdienst..."
 # Dienstdatei mit der passenden Python-Version aktualisieren
 sed -i "s|ExecStart=.*|ExecStart=$PYTHON_EXEC -m openWB.run|" "${OPENWBBASEDIR}/data/config/openwb2.service"
-# Setze PYTHONPATH für den Dienst
-sed -i "/ExecStart=/i Environment=\"PYTHONPATH=/home/$OPENWB_USER/.local/lib/python3.10/site-packages\"" "${OPENWBBASEDIR}/data/config/openwb2.service"
+if ! $USE_VENV; then
+    PYTHON_MAJOR_MINOR=$("$PYTHON_EXEC" --version | cut -d' ' -f2 | cut -d'.' -f1,2)
+    sed -i "/ExecStart=/i Environment=\"PYTHONPATH=/home/$OPENWB_USER/.local/lib/python${PYTHON_MAJOR_MINOR}/site-packages\"" "${OPENWBBASEDIR}/data/config/openwb2.service"
+fi
 ln -sf "${OPENWBBASEDIR}/data/config/openwb2.service" /etc/systemd/system/openwb2.service
 systemctl daemon-reload
 systemctl enable openwb2
@@ -361,8 +297,9 @@ systemctl enable openwb2
 echo "Installiere openWB2-Remote-Support-Dienst..."
 # Dienstdatei mit der passenden Python-Version aktualisieren
 sed -i "s|ExecStart=.*python|ExecStart=$PYTHON_EXEC|" "${OPENWBBASEDIR}/data/config/openwbRemoteSupport.service"
-# Setze PYTHONPATH für den Dienst
-sed -i "/ExecStart=/i Environment=\"PYTHONPATH=/home/$OPENWB_USER/.local/lib/python3.10/site-packages\"" "${OPENWBBASEDIR}/data/config/openwbRemoteSupport.service"
+if ! $USE_VENV; then
+    sed -i "/ExecStart=/i Environment=\"PYTHONPATH=/home/$OPENWB_USER/.local/lib/python${PYTHON_MAJOR_MINOR}/site-packages\"" "${OPENWBBASEDIR}/data/config/openwbRemoteSupport.service"
+fi
 cp "${OPENWBBASEDIR}/data/config/openwbRemoteSupport.service" /etc/systemd/system/openwbRemoteSupport.service
 systemctl daemon-reload
 systemctl enable openwbRemoteSupport
@@ -373,6 +310,3 @@ systemctl start openwb2
 
 echo "Alles fertig!"
 echo "Falls Sie diese Installation für Entwicklungsarbeiten nutzen möchten, setzen Sie ein Passwort für den Benutzer 'openwb' mit: sudo passwd openwb"
-if $USE_CUSTOM_PYTHON; then
-    echo "Python ${PYTHON_VERSION} wurde speziell für openWB-Kompatibilität installiert"
-fi
