@@ -12,8 +12,71 @@ fi
 
 echo "Installiere openWB 2 in \"${OPENWBBASEDIR}\""
 
-# Debian-Version erkennen
-DEBIAN_VERSION=$(cat /etc/debian_version | cut -d'.' -f1)
+# Debian-Version oder Codename erkennen
+DEBIAN_VERSION="unknown"
+DEBIAN_CODENAME=""
+
+# Zuerst /etc/os-release prüfen (zuverlässiger für moderne Systeme)
+if [ -f /etc/os-release ]; then
+    . /etc/os-release
+    DEBIAN_CODENAME=$VERSION_CODENAME
+    case "$DEBIAN_CODENAME" in
+        "bullseye")
+            DEBIAN_VERSION="11"
+            ;;
+        "bookworm")
+            DEBIAN_VERSION="12"
+            ;;
+        "trixie")
+            DEBIAN_VERSION="13"
+            ;;
+        "sid")
+            DEBIAN_VERSION="unstable"
+            ;;
+        *)
+            DEBIAN_VERSION="unknown"
+            ;;
+    esac
+fi
+
+# Fallback auf /etc/debian_version, falls /etc/os-release nicht eindeutig oder nicht vorhanden
+if [[ "$DEBIAN_VERSION" == "unknown" && -f /etc/debian_version ]]; then
+    DEBIAN_VERSION_RAW=$(cat /etc/debian_version)
+    case "$DEBIAN_VERSION_RAW" in
+        "11"|"11."*)
+            DEBIAN_VERSION="11"
+            DEBIAN_CODENAME="bullseye"
+            ;;
+        "12"|"12."*)
+            DEBIAN_VERSION="12"
+            DEBIAN_CODENAME="bookworm"
+            ;;
+        "13"|"13."*)
+            DEBIAN_VERSION="13"
+            DEBIAN_CODENAME="trixie"
+            ;;
+        "trixie/sid")
+            DEBIAN_VERSION="13"  # Trixie als Debian 13 behandeln
+            DEBIAN_CODENAME="trixie"
+            ;;
+        "sid")
+            DEBIAN_VERSION="unstable"
+            DEBIAN_CODENAME="sid"
+            ;;
+        *)
+            DEBIAN_VERSION="unknown"
+            ;;
+    esac
+fi
+
+# Fehler, wenn keine Version erkannt wurde
+if [[ "$DEBIAN_VERSION" == "unknown" ]]; then
+    echo "Fehler: Debian-Version konnte nicht erkannt werden."
+    echo "Unterstützte Versionen: Debian 11 (Bullseye), 12 (Bookworm), 13 (Trixie), Unstable (Sid)"
+    exit 1
+fi
+
+echo "Erkannte Debian-Version: $DEBIAN_VERSION (Codename: $DEBIAN_CODENAME)"
 
 # Funktion zur Anzeige der Warnung und Abfrage der Bestätigung
 show_warning() {
@@ -51,9 +114,13 @@ elif [[ "$DEBIAN_VERSION" == "13" ]]; then
     echo "Debian 13 (Trixie) erkannt, baue Python 3.10"
     show_warning
     USE_CUSTOM_PYTHON=true
+elif [[ "$DEBIAN_VERSION" == "unstable" ]]; then
+    echo "Debian Unstable (Sid) erkannt, baue Python 3.10 (experimentell)"
+    show_warning
+    USE_CUSTOM_PYTHON=true
 else
-    echo "Nicht unterstützte Debian-Version: $DEBIAN_VERSION"
-    echo "Dieses Script unterstützt nur Debian 11 (Bullseye), 12 (Bookworm) oder 13 (Trixie)"
+    echo "Nicht unterstützte Debian-Version: $DEBIAN_VERSION (Codename: $DEBIAN_CODENAME)"
+    echo "Dieses Script unterstützt nur Debian 11 (Bullseye), 12 (Bookworm), 13 (Trixie) oder Unstable (Sid)"
     exit 1
 fi
 
@@ -64,7 +131,7 @@ if [ $? -ne 0 ]; then
     bash ./install_packages.sh
 fi
 
-# Python 3.10 nur für Bookworm und Trixie bauen
+# Python 3.10 nur für Bookworm, Trixie und Sid bauen
 if $USE_CUSTOM_PYTHON; then
     echo "Baue und installiere Python ${PYTHON_VERSION}..."
     TEMP_DIR=$(mktemp -d)
@@ -215,16 +282,27 @@ echo "Fertig"
 if $USE_CUSTOM_PYTHON; then
     PYTHON_PATH="/usr/local/bin"
     PYTHON_EXEC="/usr/local/bin/python3"
+    PIP_EXEC="/usr/local/bin/pip3"
     echo "Installiere Python-Anforderungen mit benutzerdefiniertem Python ${PYTHON_VERSION}..."
 else
     PYTHON_PATH="/usr/bin"
     PYTHON_EXEC="/usr/bin/python3"
+    PIP_EXEC="/usr/bin/pip3"
     echo "Installiere Python-Anforderungen mit System-Python..."
 fi
 
 # Python-Anforderungen installieren
-PATH="$PYTHON_PATH:$PATH" pip3 install --upgrade pip
-sudo -u "$OPENWB_USER" PATH="$PYTHON_PATH:$PATH" pip3 install -r "${OPENWBBASEDIR}/requirements.txt"
+echo "Aktualisiere pip..."
+PATH="$PYTHON_PATH:$PATH" $PIP_EXEC install --upgrade pip
+
+echo "Installiere Python-Abhängigkeiten aus requirements.txt..."
+sudo -u "$OPENWB_USER" PATH="$PYTHON_PATH:$PATH" $PIP_EXEC install -r "${OPENWBBASEDIR}/requirements.txt"
+
+# Für Debian 12, 13 und Sid: jq auf die neueste Version aktualisieren
+if [[ "$DEBIAN_VERSION" == "12" || "$DEBIAN_VERSION" == "13" || "$DEBIAN_VERSION" == "unstable" ]]; then
+    echo "Aktualisiere jq auf die neueste Version für Debian $DEBIAN_VERSION..."
+    sudo -u "$OPENWB_USER" PATH="$PYTHON_PATH:$PATH" $PIP_EXEC install jq
+fi
 
 echo "Installiere openWB2-Systemdienst..."
 # Dienstdatei mit der passenden Python-Version aktualisieren
