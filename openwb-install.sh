@@ -317,11 +317,31 @@ if [[ "$DEBIAN_VERSION" == "12" || "$DEBIAN_VERSION" == "13" || "$DEBIAN_VERSION
     TEMP_REQ="/home/$OPENWB_USER/temp_requirements.txt"
     sudo -u "$OPENWB_USER" bash -c "grep -v '^jq' ${OPENWBBASEDIR}/requirements.txt > $TEMP_REQ"
     sudo -u "$OPENWB_USER" bash -c "echo 'jq' >> $TEMP_REQ"
+    # Debugging: Zeige den Inhalt der temporären Datei
+    echo "Inhalt der temporären requirements.txt:"
+    sudo -u "$OPENWB_USER" cat "$TEMP_REQ"
+    # Installiere die Abhängigkeiten
     sudo -u "$OPENWB_USER" PATH="$PYTHON_PATH:$PATH" $PIP_EXEC install --user -r "$TEMP_REQ"
+    # Prüfe, ob jq installiert wurde
+    if ! sudo -u "$OPENWB_USER" PATH="$PYTHON_PATH:$PATH" $PIP_EXEC show jq > /dev/null; then
+        echo "Fehler: Python-Paket jq konnte nicht installiert werden"
+        # Versuche, jq separat zu installieren, um den Fehler zu identifizieren
+        echo "Versuche, jq separat zu installieren..."
+        sudo -u "$OPENWB_USER" PATH="$PYTHON_PATH:$PATH" $PIP_EXEC install --user jq
+        if [ $? -ne 0 ]; then
+            echo "Fehler: Installation von jq fehlgeschlagen"
+            exit 1
+        fi
+    fi
     rm -f "$TEMP_REQ"
 else
     echo "Installiere Abhängigkeiten aus requirements.txt..."
     sudo -u "$OPENWB_USER" PATH="$PYTHON_PATH:$PATH" $PIP_EXEC install --user -r "${OPENWBBASEDIR}/requirements.txt"
+    # Prüfe, ob jq installiert wurde
+    if ! sudo -u "$OPENWB_USER" PATH="$PYTHON_PATH:$PATH" $PIP_EXEC show jq > /dev/null; then
+        echo "Fehler: Python-Paket jq konnte nicht installiert werden"
+        exit 1
+    fi
 fi
 
 echo "Installiere openWB2-Systemdienst..."
