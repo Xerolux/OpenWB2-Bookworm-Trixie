@@ -86,7 +86,7 @@ if [[ "$DEBIAN_VERSION" == "12" || "$DEBIAN_VERSION" == "13" || "$DEBIAN_VERSION
     echo "Zusätzliche Build-Tools erfolgreich installiert."
 fi
 
-# Funktion zur Anzeige der Warnung und Abfrage der Bestätigung
+# Funktion zur Anzeige der Warnung mit 10 Sekunden Verzögerung
 show_warning() {
     echo "*******************************************************************"
     echo "* ACHTUNG / WARNING *"
@@ -100,13 +100,8 @@ show_warning() {
     echo "* limited support. This is an openWB Community Edition without       *"
     echo "* support or warranty of functionality.                              *"
     echo "*******************************************************************"
-    echo ""
-    read -p "Möchten Sie fortfahren? (ja/yes) " confirm
-    echo "Eingabe war: '$confirm'"  # Debugging-Ausgabe
-    if [[ "$confirm" != "ja" && "$confirm" != "yes" ]]; then
-        echo "Installation abgebrochen."
-        exit 1
-    fi
+    echo "Installation wird in 10 Sekunden fortgesetzt..."
+    sleep 10
 }
 
 # Bedingte Installation basierend auf der Debian-Version
@@ -309,13 +304,18 @@ fi
 echo "Aktualisiere pip..."
 PATH="$PYTHON_PATH:$PATH" $PIP_EXEC install --upgrade pip
 
-echo "Installiere Python-Abhängigkeiten aus requirements.txt..."
-sudo -u "$OPENWB_USER" PATH="$PYTHON_PATH:$PATH" $PIP_EXEC install -r "${OPENWBBASEDIR}/requirements.txt"
-
-# Für Debian 12, 13 und Sid: jq auf die neueste Version aktualisieren
+echo "Installiere Python-Abhängigkeiten..."
 if [[ "$DEBIAN_VERSION" == "12" || "$DEBIAN_VERSION" == "13" || "$DEBIAN_VERSION" == "unstable" ]]; then
-    echo "Aktualisiere jq auf die neueste Version für Debian $DEBIAN_VERSION..."
-    sudo -u "$OPENWB_USER" PATH="$PYTHON_PATH:$PATH" $PIP_EXEC install jq
+    echo "Für Debian $DEBIAN_VERSION: Installiere Abhängigkeiten aus requirements.txt zusammen mit der neuesten Version von jq..."
+    # Erstelle eine temporäre requirements-Liste, die jq ohne Versionsangabe enthält
+    TEMP_REQ=$(mktemp)
+    grep -v '^jq' "${OPENWBBASEDIR}/requirements.txt" > "$TEMP_REQ"  # Entferne jq aus requirements.txt (falls vorhanden)
+    echo "jq" >> "$TEMP_REQ"  # Füge jq ohne Versionsangabe hinzu, um die neueste Version zu installieren
+    sudo -u "$OPENWB_USER" PATH="$PYTHON_PATH:$PATH" $PIP_EXEC install -r "$TEMP_REQ"
+    rm -f "$TEMP_REQ"
+else
+    echo "Installiere Abhängigkeiten aus requirements.txt..."
+    sudo -u "$OPENWB_USER" PATH="$PYTHON_PATH:$PATH" $PIP_EXEC install -r "${OPENWBBASEDIR}/requirements.txt"
 fi
 
 echo "Installiere openWB2-Systemdienst..."
