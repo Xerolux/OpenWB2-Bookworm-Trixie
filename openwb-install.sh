@@ -94,6 +94,7 @@ show_warning() {
     echo "*******************************************************************"
     echo ""
     read -p "Möchten Sie fortfahren? (ja/yes) " confirm
+    echo "Eingabe war: '$confirm'"  # Debugging-Ausgabe
     if [[ "$confirm" != "ja" && "$confirm" != "yes" ]]; then
         echo "Installation abgebrochen."
         exit 1
