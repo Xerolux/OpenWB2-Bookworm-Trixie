@@ -78,6 +78,14 @@ fi
 
 echo "Erkannte Debian-Version: $DEBIAN_VERSION (Codename: $DEBIAN_CODENAME)"
 
+# Zusätzliche Build-Tools für Debian 12, 13 und 14 installieren
+if [[ "$DEBIAN_VERSION" == "12" || "$DEBIAN_VERSION" == "13" || "$DEBIAN_VERSION" == "14" ]]; then
+    echo "Installiere zusätzliche Build-Tools für Debian $DEBIAN_VERSION..."
+    apt-get update
+    apt-get install -y autoconf automake build-essential libtool
+    echo "Zusätzliche Build-Tools erfolgreich installiert."
+fi
+
 # Funktion zur Anzeige der Warnung und Abfrage der Bestätigung
 show_warning() {
     echo "*******************************************************************"
@@ -132,31 +140,36 @@ if [ $? -ne 0 ]; then
     bash ./install_packages.sh
 fi
 
-# Python 3.10 nur für Bookworm, Trixie und Sid bauen
+# Python 3.10 nur für Bookworm, Trixie und Sid bauen, falls nicht bereits installiert
 if $USE_CUSTOM_PYTHON; then
-    echo "Baue und installiere Python ${PYTHON_VERSION}..."
-    TEMP_DIR=$(mktemp -d)
-    cd "$TEMP_DIR"
+    PYTHON_BINARY="/usr/local/bin/python${PYTHON_VERSION%.*}"  # z. B. /usr/local/bin/python3.10
+    if [ -x "$PYTHON_BINARY" ] && "$PYTHON_BINARY" --version | grep -q "$PYTHON_VERSION"; then
+        echo "Python ${PYTHON_VERSION} ist bereits installiert, überspringe Installation."
+    else
+        echo "Baue und installiere Python ${PYTHON_VERSION}..."
+        TEMP_DIR=$(mktemp -d)
+        cd "$TEMP_DIR"
 
-    # Python-Quelle herunterladen und extrahieren
-    wget "https://www.python.org/ftp/python/${PYTHON_VERSION}/Python-${PYTHON_VERSION}.tgz"
-    tar -xf "Python-${PYTHON_VERSION}.tgz"
-    cd "Python-${PYTHON_VERSION}"
+        # Python-Quelle herunterladen und extrahieren
+        wget "https://www.python.org/ftp/python/${PYTHON_VERSION}/Python-${PYTHON_VERSION}.tgz"
+        tar -xf "Python-${PYTHON_VERSION}.tgz"
+        cd "Python-${PYTHON_VERSION}"
 
-    # Python konfigurieren und bauen
-    ./configure --enable-optimizations --with-ensurepip=install
-    make -j $(nproc)
-    make altinstall
+        # Python konfigurieren und bauen
+        ./configure --enable-optimizations --with-ensurepip=install
+        make -j $(nproc)
+        make altinstall
 
-    # Aufräumen
-    cd /
-    rm -rf "$TEMP_DIR"
+        # Aufräumen
+        cd /
+        rm -rf "$TEMP_DIR"
 
-    # Symlinks für die neue Python-Version erstellen
-    ln -sf "/usr/local/bin/python3.10" "/usr/local/bin/python3"
-    ln -sf "/usr/local/bin/pip3.10" "/usr/local/bin/pip3"
+        # Symlinks für die neue Python-Version erstellen
+        ln -sf "/usr/local/bin/python${PYTHON_VERSION%.*}" "/usr/local/bin/python3"
+        ln -sf "/usr/local/bin/pip${PYTHON_VERSION%.*}" "/usr/local/bin/pip3"
 
-    echo "Python ${PYTHON_VERSION} erfolgreich installiert"
+        echo "Python ${PYTHON_VERSION} erfolgreich installiert"
+    fi
 fi
 
 echo "Erstelle Gruppe $OPENWB_GROUP"
