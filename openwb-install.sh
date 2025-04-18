@@ -3,6 +3,10 @@ OPENWBBASEDIR=/var/www/html/openWB
 OPENWB_USER=openwb
 OPENWB_GROUP=openwb
 VENV_DIR="${OPENWBBASEDIR}/venv"
+TEMP_REQ="/home/$OPENWB_USER/temp_requirements.txt"
+
+# Lösche temporäre Datei bei Skript-Abbruch
+trap 'rm -f "$TEMP_REQ"' EXIT
 
 # Prüfen, ob das Script als Root ausgeführt wird
 if (( $(id -u) != 0 )); then
@@ -11,6 +15,18 @@ if (( $(id -u) != 0 )); then
 fi
 
 echo "installing openWB 2 into \"${OPENWBBASEDIR}\""
+
+# Setze UTF-8 Locale und Zeitzone Berlin
+echo "Setze UTF-8 Locale und Zeitzone Europe/Berlin..."
+if ! locale -a | grep -q "de_DE.utf8"; then
+    echo "Generiere de_DE.UTF-8 Locale..."
+    apt-get update
+    apt-get install -y locales
+    locale-gen de_DE.UTF-8
+fi
+update-locale LANG=de_DE.UTF-8 LC_ALL=de_DE.UTF-8
+timedatectl set-timezone Europe/Berlin
+echo "Locale und Zeitzone erfolgreich gesetzt."
 
 # Debian-Version oder Codename erkennen
 DEBIAN_VERSION="unknown"
@@ -39,7 +55,7 @@ if [ -f /etc/os-release ]; then
     esac
 fi
 
-# Fallback auf /etc/debian_version, falls /etc/os-release nicht eindeutig oder nicht vorhanden
+# Fallback auf /etc/debian_version
 if [[ "$DEBIAN_VERSION" == "unknown" && -f /etc/debian_version ]]; then
     DEBIAN_VERSION_RAW=$(cat /etc/debian_version)
     case "$DEBIAN_VERSION_RAW" in
@@ -56,7 +72,7 @@ if [[ "$DEBIAN_VERSION" == "unknown" && -f /etc/debian_version ]]; then
             DEBIAN_CODENAME="trixie"
             ;;
         "trixie/sid")
-            DEBIAN_VERSION="13"  # Trixie als Debian 13 behandeln
+            DEBIAN_VERSION="13"
             DEBIAN_CODENAME="trixie"
             ;;
         "sid")
@@ -78,19 +94,50 @@ fi
 
 echo "Erkannte Debian-Version: $DEBIAN_VERSION (Codename: $DEBIAN_CODENAME)"
 
-# Installationspakete über ein aktualisiertes Script installieren
+# Erweitere Dateisystem auf Raspberry Pi
+if [ -f /proc/device-tree/model ] && grep -q "Raspberry Pi" /proc/device-tree/model; then
+    echo "Erkenne Raspberry Pi, erweitere Dateisystem..."
+    if command -v raspi-config >/dev/null; then
+        raspi-config nonint do_expand_rootfs
+        echo "Dateisystem mit raspi-config erfolgreich erweitert."
+    else
+        echo "raspi-config nicht gefunden, versuche manuelle Erweiterung..."
+        ROOT_PART=$(mount | grep "on / " | awk '{print $1}' | sed 's/p[0-9]$//')
+        ROOT_PART_NUM=$(mount | grep "on / " | awk '{print $1}' | grep -o '[0-9]$')
+        if [ -n "$ROOT_PART" ] && [ -n "$ROOT_PART_NUM" ]; then
+            echo -e "d\n$ROOT_PART_NUM\nn\np\n$ROOT_PART_NUM\n\n\nw" | fdisk "$ROOT_PART"
+            partprobe
+            resize2fs "${ROOT_PART}p${ROOT_PART_NUM}"
+            echo "Dateisystem manuell erfolgreich erweitert."
+        else
+            echo "Fehler: Root-Partition konnte nicht erkannt werden, überspringe Erweiterung."
+        fi
+    fi
+else
+    echo "Kein Raspberry Pi erkannt, überspringe Dateisystemerweiterung."
+fi
+
+# Installiere python3-pip für Debian 11
+if [[ "$DEBIAN_VERSION" == "11" ]]; then
+    echo "Installiere python3-pip für Debian 11..."
+    apt-get update
+    apt-get install -y python3-pip
+    echo "python3-pip erfolgreich installiert."
+fi
+
+# Installationspakete über Script installieren
 curl -s "https://raw.githubusercontent.com/Xerolux/OpenWB2-Bookworm-Trixie/master/runs/install_packages.sh" | bash -s
 if [ $? -ne 0 ]; then
     echo "Versuche lokales install_packages.sh..."
     bash ./install_packages.sh
 fi
 
-# Installiere zusätzliche Build-Tools für Debian 12, 13 und unstable
+# Installiere Build-Tools und python3-dev für Debian 12, 13 und unstable
 if [[ "$DEBIAN_VERSION" == "12" || "$DEBIAN_VERSION" == "13" || "$DEBIAN_VERSION" == "unstable" ]]; then
-    echo "Installiere zusätzliche Build-Tools für Debian $DEBIAN_VERSION..."
+    echo "Installiere Build-Tools und python3-dev für Debian $DEBIAN_VERSION..."
     apt-get update
-    apt-get install -y autoconf automake build-essential libtool
-    echo "Zusätzliche Build-Tools erfolgreich installiert."
+    apt-get install -y autoconf automake build-essential libtool python3-dev
+    echo "Build-Tools und python3-dev erfolgreich installiert."
 fi
 
 # Installiere libxml2, libxslt und Entwicklungspakete für Debian 12, 13, 14 und höher
@@ -100,12 +147,12 @@ if [[ "$DEBIAN_VERSION" =~ ^[0-9]+$ ]] && [[ "$DEBIAN_VERSION" -ge 12 ]]; then
     echo "libxml2, libxslt und Entwicklungspakete erfolgreich installiert."
 fi
 
-# Installiere notwendige Netzwerk- und Firewall-Pakete
-echo "Installiere notwendige Netzwerk- und Firewall-Pakete..."
+# Installiere Netzwerk- und Firewall-Pakete
+echo "Installiere Netzwerk- und Firewall-Pakete..."
 apt-get install -y iptables dhcpcd5 dnsmasq
-echo "Pakete erfolgreich installiert."
+echo "Netzwerk- und Firewall-Pakete erfolgreich installiert."
 
-# Funktion zur Anzeige der Warnung mit 10 Sekunden Verzögerung
+# Warnung für Debian 12, 13 und unstable
 show_warning() {
     echo "*******************************************************************"
     echo "* ACHTUNG / WARNING *"
@@ -123,22 +170,18 @@ show_warning() {
     sleep 10
 }
 
-# Zeige Warnung für Debian 12, 13 und unstable
 if [[ "$DEBIAN_VERSION" == "12" || "$DEBIAN_VERSION" == "13" || "$DEBIAN_VERSION" == "unstable" ]]; then
     show_warning
 fi
 
 echo "create group $OPENWB_GROUP"
-# Will do nothing if group already exists:
 /usr/sbin/groupadd "$OPENWB_GROUP"
 echo "done"
 
 echo "create user $OPENWB_USER"
-# Will do nothing if user already exists:
 /usr/sbin/useradd "$OPENWB_USER" -g "$OPENWB_GROUP" --create-home
 echo "done"
 
-# Sudo-Rechte für den Benutzer hinzufügen
 echo "$OPENWB_USER ALL=(ALL) NOPASSWD: ALL" > /etc/sudoers.d/openwb
 chmod 440 /etc/sudoers.d/openwb
 echo "done"
@@ -171,7 +214,6 @@ else
     echo "ok"
 fi
 
-# check for mosquitto configuration
 echo "updating mosquitto config file"
 systemctl stop mosquitto
 sleep 2
@@ -184,7 +226,6 @@ sudo cp /etc/ssl/private/ssl-cert-snakeoil.key /etc/mosquitto/certs/openwb.key
 sudo chgrp mosquitto /etc/mosquitto/certs/openwb.key
 systemctl start mosquitto
 
-# check for mosquitto_local instance
 if [ ! -f /etc/init.d/mosquitto_local ]; then
     echo "setting up mosquitto local instance"
     install -d -m 0755 -o root -g root /etc/mosquitto/conf_local.d/
@@ -203,7 +244,6 @@ cp -a "${OPENWBBASEDIR}/data/config/mosquitto/openwb_local.conf" /etc/mosquitto/
 systemctl start mosquitto_local
 echo "mosquitto done"
 
-# apache
 echo -n "replacing apache default page..."
 cp "${OPENWBBASEDIR}/data/config/apache/000-default.conf" "/etc/apache2/sites-available/"
 cp "${OPENWBBASEDIR}/index.html" /var/www/html/index.html
@@ -212,25 +252,25 @@ echo -n "fix upload limit..."
 if [ -d "/etc/php/7.3/" ]; then
     echo "upload_max_filesize = 300M" > /etc/php/7.3/apache2/conf.d/20-uploadlimit.ini
     echo "post_max_size = 300M" >> /etc/php/7.3/apache2/conf.d/20-uploadlimit.ini
-    echo "done (OS Buster)"
+    echo "done (PHP 7.3 - OS Buster)"
 elif [ -d "/etc/php/7.4/" ]; then
     echo "upload_max_filesize = 300M" > /etc/php/7.4/apache2/conf.d/20-uploadlimit.ini
     echo "post_max_size = 300M" >> /etc/php/7.4/apache2/conf.d/20-uploadlimit.ini
-    echo "done (OS Bullseye)"
+    echo "done (PHP 7.4 - OS Bullseye)"
 elif [ -d "/etc/php/8.2/" ]; then
     echo "upload_max_filesize = 300M" > /etc/php/8.2/apache2/conf.d/20-uploadlimit.ini
     echo "post_max_size = 300M" >> /etc/php/8.2/apache2/conf.d/20-uploadlimit.ini
-    echo "done (OS Bookworm)"
+    echo "done (PHP 8.2 - OS Bookworm)"
 elif [ -d "/etc/php/8.3/" ]; then
     echo "upload_max_filesize = 300M" > /etc/php/8.3/apache2/conf.d/20-uploadlimit.ini
     echo "post_max_size = 300M" >> /etc/php/8.3/apache2/conf.d/20-uploadlimit.ini
-    echo "done (OS Trixie)"
+    echo "done (PHP 8.3 - OS Trixie)"
 elif [ -d "/etc/php/8.4/" ]; then
     echo "upload_max_filesize = 300M" > /etc/php/8.4/apache2/conf.d/20-uploadlimit.ini
     echo "post_max_size = 300M" >> /etc/php/8.4/apache2/conf.d/20-uploadlimit.ini
-    echo "done (OS Sid or later)"
+    echo "done (PHP 8.4 - OS Sid or later)"
 else
-    echo "no supported PHP version found, skipping upload limit configuration"
+    echo "Fehler: Keine unterstützte PHP-Version gefunden, überspringe Upload-Limit-Konfiguration"
 fi
 echo -n "enabling apache ssl module..."
 a2enmod ssl
@@ -243,19 +283,17 @@ echo -n "restarting apache..."
 systemctl restart apache2
 echo "done"
 
-# Setze USE_VENV basierend auf der Debian-Version
 if [[ "$DEBIAN_VERSION" == "12" || "$DEBIAN_VERSION" == "13" || "$DEBIAN_VERSION" == "unstable" ]]; then
     USE_VENV=true
 else
     USE_VENV=false
 fi
 
-# Setze PYTHON_EXEC und PIP_EXEC
 if $USE_VENV; then
     if [ ! -d "$VENV_DIR" ]; then
         echo "Erstelle virtuelle Umgebung in ${VENV_DIR}..."
         sudo -u "$OPENWB_USER" /usr/bin/python3 -m venv "$VENV_DIR"
-        echo "Virtuelle Umgebung erstellt."
+        echo "Virtuelle Umgebung erfolgreich erstellt."
     fi
     PYTHON_EXEC="$VENV_DIR/bin/python"
     PIP_EXEC="$VENV_DIR/bin/pip"
@@ -267,15 +305,25 @@ fi
 echo "installing python requirements..."
 if $USE_VENV; then
     sudo -u "$OPENWB_USER" "$PIP_EXEC" install --upgrade pip
-    sudo -u "$OPENWB_USER" "$PIP_EXEC" install -r "${OPENWBBASEDIR}/requirements.txt"
+    if [[ "$DEBIAN_VERSION" == "12" || "$DEBIAN_VERSION" == "13" || "$DEBIAN_VERSION" == "unstable" ]]; then
+        echo "Für Debian $DEBIAN_VERSION: Installiere Abhängigkeiten aus requirements.txt zusammen mit der neuesten Version von jq..."
+        sudo -u "$OPENWB_USER" bash -c "grep -v '^jq' ${OPENWBBASEDIR}/requirements.txt > $TEMP_REQ"
+        sudo -u "$OPENWB_USER" bash -c "echo 'jq' >> $TEMP_REQ"
+        sudo -u "$OPENWB_USER" "$PIP_EXEC" install -r "$TEMP_REQ"
+        if ! sudo -u "$OPENWB_USER" "$PIP_EXEC" show jq > /dev/null; then
+            echo "Fehler: Python-Paket jq konnte nicht installiert werden. Überprüfe die requirements.txt und die Netzwerkverbindung."
+            exit 1
+        fi
+    else
+        sudo -u "$OPENWB_USER" "$PIP_EXEC" install -r "${OPENWBBASEDIR}/requirements.txt"
+    fi
 else
     sudo -u "$OPENWB_USER" "$PIP_EXEC" install --user --upgrade pip
     sudo -u "$OPENWB_USER" "$PIP_EXEC" install --user -r "${OPENWBBASEDIR}/requirements.txt"
 fi
 
-# Prüfe, ob die Installation erfolgreich war
 if [ $? -ne 0 ]; then
-    echo "Fehler bei der Installation der Python-Abhängigkeiten"
+    echo "Fehler bei der Installation der Python-Abhängigkeiten. Überprüfe die requirements.txt und die Paketquellen."
     exit 1
 fi
 
@@ -302,5 +350,51 @@ systemctl start openwbRemoteSupport
 echo "installation finished, now starting openwb2.service..."
 systemctl start openwb2
 
+# Systemoptimierung
+echo "Optimiere System..."
+# APT aufräumen
+apt-get autoclean
+apt-get autoremove -y
+echo "APT Cache und ungenutzte Pakete bereinigt."
+
+# Python-Cache löschen
+find "$OPENWBBASEDIR" -type d -name "__pycache__" -exec rm -rf {} +
+find "/home/$OPENWB_USER/.local" -type d -name "__pycache__" -exec rm -rf {} +
+find "$OPENWBBASEDIR" -type f -name "*.pyc" -delete
+find "$OPENWBBASEDIR" -type f -name "*.pyo" -delete
+find "/home/$OPENWB_USER/.local" -type f -name "*.pyc" -delete
+find "/home/$OPENWB_USER/.local" -type f -name "*.pyo" -delete
+echo "Python-Cache erfolgreich gelöscht."
+
+# Speicheroptimierungen
+echo "vm.swappiness=10" > /etc/sysctl.d/99-openwb.conf
+echo "vm.vfs_cache_pressure=200" >> /etc/sysctl.d/99-openwb.conf
+sysctl -p /etc/sysctl.d/99-openwb.conf
+echo "Speicheroptimierungen (Swappiness, VFS Cache) angewendet."
+
+# Journal-Logs bereinigen
+journalctl --vacuum-time=7d
+echo "Systemd Journal-Logs älter als 7 Tage bereinigt."
+
+# Deaktiviere unnötige Dienste auf Raspberry Pi
+if [ -f /proc/device-tree/model ] && grep -q "Raspberry Pi" /proc/device-tree/model; then
+    if systemctl is-active --quiet bluetooth; then
+        systemctl disable bluetooth
+        systemctl stop bluetooth
+        echo "Bluetooth-Dienst deaktiviert."
+    fi
+fi
+
+# Konfiguriere tmpfs für /tmp und /var/log
+if ! grep -q "/tmp" /etc/fstab; then
+    echo "tmpfs /tmp tmpfs defaults,noatime,nosuid,nodev 0 0" >> /etc/fstab
+fi
+if ! grep -q "/var/log" /etc/fstab; then
+    echo "tmpfs /var/log tmpfs defaults,noatime,nosuid,nodev 0 0" >> /etc/fstab
+fi
+mount -a
+echo "tmpfs für /tmp und /var/log konfiguriert."
+
+echo "Systemoptimierung abgeschlossen."
 echo "all done"
 echo "if you want to use this installation for development, add a password for user 'openwb' with: sudo passwd openwb"
