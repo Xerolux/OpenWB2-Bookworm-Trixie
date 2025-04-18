@@ -93,11 +93,11 @@ if [[ "$DEBIAN_VERSION" == "12" || "$DEBIAN_VERSION" == "13" || "$DEBIAN_VERSION
     echo "Zusätzliche Build-Tools erfolgreich installiert."
 fi
 
-# Installiere libxml2 und libxslt für Debian 12, 13, 14 und höher
+# Installiere libxml2, libxslt und Entwicklungspakete für Debian 12, 13, 14 und höher
 if [[ "$DEBIAN_VERSION" =~ ^[0-9]+$ ]] && [[ "$DEBIAN_VERSION" -ge 12 ]]; then
-    echo "Installiere libxml2 und libxslt für Debian $DEBIAN_VERSION..."
-    apt-get install -y libxml2 libxslt1.1
-    echo "libxml2 und libxslt erfolgreich installiert."
+    echo "Installiere libxml2, libxslt und Entwicklungspakete für Debian $DEBIAN_VERSION..."
+    apt-get install -y libxml2 libxslt1.1 libxml2-dev libxslt1-dev
+    echo "libxml2, libxslt und Entwicklungspakete erfolgreich installiert."
 fi
 
 # Installiere notwendige Netzwerk- und Firewall-Pakete
