@@ -86,6 +86,11 @@ if [[ "$DEBIAN_VERSION" == "12" || "$DEBIAN_VERSION" == "13" || "$DEBIAN_VERSION
     echo "Zusätzliche Build-Tools erfolgreich installiert."
 fi
 
+# Installiere notwendige Netzwerk- und Firewall-Pakete
+echo "Installiere notwendige Netzwerk- und Firewall-Pakete..."
+apt-get install -y iptables dhcpcd5 dnsmasq
+echo "Pakete erfolgreich installiert."
+
 # Funktion zur Anzeige der Warnung mit 10 Sekunden Verzögerung
 show_warning() {
     echo "*******************************************************************"
@@ -347,6 +352,8 @@ fi
 echo "Installiere openWB2-Systemdienst..."
 # Dienstdatei mit der passenden Python-Version aktualisieren
 sed -i "s|ExecStart=.*|ExecStart=$PYTHON_EXEC -m openWB.run|" "${OPENWBBASEDIR}/data/config/openwb2.service"
+# Setze PYTHONPATH für den Dienst
+sed -i "/ExecStart=/i Environment=\"PYTHONPATH=/home/$OPENWB_USER/.local/lib/python3.10/site-packages\"" "${OPENWBBASEDIR}/data/config/openwb2.service"
 ln -sf "${OPENWBBASEDIR}/data/config/openwb2.service" /etc/systemd/system/openwb2.service
 systemctl daemon-reload
 systemctl enable openwb2
@@ -354,6 +361,8 @@ systemctl enable openwb2
 echo "Installiere openWB2-Remote-Support-Dienst..."
 # Dienstdatei mit der passenden Python-Version aktualisieren
 sed -i "s|ExecStart=.*python|ExecStart=$PYTHON_EXEC|" "${OPENWBBASEDIR}/data/config/openwbRemoteSupport.service"
+# Setze PYTHONPATH für den Dienst
+sed -i "/ExecStart=/i Environment=\"PYTHONPATH=/home/$OPENWB_USER/.local/lib/python3.10/site-packages\"" "${OPENWBBASEDIR}/data/config/openwbRemoteSupport.service"
 cp "${OPENWBBASEDIR}/data/config/openwbRemoteSupport.service" /etc/systemd/system/openwbRemoteSupport.service
 systemctl daemon-reload
 systemctl enable openwbRemoteSupport
