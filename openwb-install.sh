@@ -159,7 +159,7 @@ if [[ "$DEBIAN_VERSION" == "12" || "$DEBIAN_VERSION" == "13" || "$DEBIAN_VERSION
     echo "Installiere $PYTHON_VENV_PKG für Debian $DEBIAN_VERSION..."
     apt-get install -y "$PYTHON_VENV_PKG"
     if [ $? -ne 0 ]; then
-        echo "Fehler: Konnte $PYTHON_VENV_PKG nicht installieren. Überprüfe die Paketquellen."
+        echo "Fehler: Konnte $PYTHON_VENV_PKG nicht installieren. Überprüfe die -y python3-venv python${PYTHON_VERSION}-venv nicht installiert. Überprüfe die Paketquellen."
         exit 1
     fi
 fi
@@ -309,27 +309,53 @@ else
 fi
 
 if $USE_VENV; then
-    if [ ! -d "$VENV_DIR" ]; then
-        echo "Erstelle virtuelle Umgebung in ${VENV_DIR}..."
-        sudo -u "$OPENWB_USER" /usr/bin/python3 -m venv "$VENV_DIR"
-        if [ $? -ne 0 ]; then
-            echo "Fehler: Konnte virtuelle Umgebung nicht erstellen. Überprüfe Python und python3-venv Installation."
-            exit 1
-        fi
-        echo "Virtuelle Umgebung erfolgreich erstellt."
+    # Lösche bestehende virtuelle Umgebung, falls sie beschädigt ist
+    if [ -d "$VENV_DIR" ]; then
+        echo "Lösche bestehende virtuelle Umgebung in ${VENV_DIR}..."
+        rm -rf "$VENV_DIR"
     fi
+
+    echo "Erstelle virtuelle Umgebung in ${VENV_DIR}..."
+    sudo -u "$OPENWB_USER" /usr/bin/python3 -m venv "$VENV_DIR"
+    if [ $? -ne 0 ]; then
+        echo "Fehler: Konnte virtuelle Umgebung nicht erstellen. Überprüfe Python und python3-venv Installation."
+        exit 1
+    fi
+    echo "Virtuelle Umgebung erfolgreich erstellt."
+
     PYTHON_EXEC="$VENV_DIR/bin/python"
     PIP_EXEC="$VENV_DIR/bin/pip"
+
     # Prüfe, ob pip im Venv existiert
     if [ ! -f "$PIP_EXEC" ]; then
         echo "Fehler: pip nicht in der virtuellen Umgebung gefunden ($PIP_EXEC). Versuche, pip zu installieren..."
-        sudo -u "$OPENWB_USER" "$PYTHON_EXEC" -m ensurepip --upgrade
-        sudo -u "$OPENWB_USER" "$PYTHON_EXEC" -m pip install --upgrade pip
+
+        # Prüfe, ob ensurepip verfügbar ist
+        if sudo -u "$OPENWB_USER" "$PYTHON_EXEC" -c "import ensurepip" 2>/dev/null; then
+            echo "Verwende ensurepip, um pip zu installieren..."
+            sudo -u "$OPENWB_USER" "$PYTHON_EXEC" -m ensurepip --upgrade
+            sudo -u "$OPENWB_USER" "$PYTHON_EXEC" -m pip install --upgrade pip
+        else
+            echo "ensurepip nicht verfügbar, lade pip manuell herunter..."
+            # Fallback: Lade get-pip.py herunter und installiere pip
+            TEMP_PIP_SCRIPT="/tmp/get-pip.py"
+            curl -s https://bootstrap.pypa.io/get-pip.py -o "$TEMP_PIP_SCRIPT"
+            if [ -f "$TEMP_PIP_SCRIPT" ]; then
+                sudo -u "$OPENWB_USER" "$PYTHON_EXEC" "$TEMP_PIP_SCRIPT"
+                rm -f "$TEMP_PIP_SCRIPT"
+            else
+                echo "Fehler: Konnte get-pip.py nicht herunterladen."
+                exit 1
+            fi
+        fi
+
+        # Überprüfe erneut, ob pip installiert wurde
         if [ ! -f "$PIP_EXEC" ]; then
             echo "Fehler: Konnte pip nicht in der virtuellen Umgebung installieren."
             exit 1
         fi
     fi
+    echo "pip erfolgreich in der virtuellen Umgebung installiert."
 else
     PYTHON_EXEC="/usr/bin/python3"
     PIP_EXEC="/usr/bin/pip3"
