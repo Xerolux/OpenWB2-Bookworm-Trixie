@@ -277,43 +277,113 @@ cp -a "${OPENWBBASEDIR}/data/config/mosquitto/openwb_local.conf" /etc/mosquitto/
 systemctl start mosquitto_local
 echo "mosquitto done"
 
-echo -n "replacing apache default page..."
-cp "${OPENWBBASEDIR}/data/config/apache/000-default.conf" "/etc/apache2/sites-available/"
-cp "${OPENWBBASEDIR}/index.html" /var/www/html/index.html
+# Installiere Nginx und PHP-FPM
+echo "Installiere Nginx und PHP-FPM..."
+apt-get install -y nginx php-fpm
+if [[ "$DEBIAN_VERSION" == "11" ]]; then
+    PHP_FPM_SOCK="/run/php/php7.4-fpm.sock"
+elif [[ "$DEBIAN_VERSION" == "12" ]]; then
+    PHP_FPM_SOCK="/run/php/php8.2-fpm.sock"
+elif [[ "$DEBIAN_VERSION" == "13" || "$DEBIAN_VERSION" == "14" || "$DEBIAN_VERSION" == "unstable" ]]; then
+    PHP_FPM_SOCK="/run/php/php8.3-fpm.sock"
+else
+    PHP_FPM_SOCK="/run/php/php-fpm.sock"
+fi
+echo "Nginx und PHP-FPM installiert (PHP-FPM Socket: $PHP_FPM_SOCK)."
+
+# Konfiguriere Nginx
+echo -n "Konfiguriere Nginx..."
+cat > /etc/nginx/sites-available/openwb-ssl << 'EOF'
+server {
+    listen 443 ssl;
+    server_name _;
+
+    ssl_certificate /etc/ssl/certs/ssl-cert-snakeoil.pem;
+    ssl_certificate_key /etc/ssl/private/ssl-cert-snakeoil.key;
+    ssl_protocols TLSv1.2 TLSv1.3;
+    ssl_ciphers HIGH:!aNULL:!MD5;
+    ssl_prefer_server_ciphers on;
+
+    root /var/www/html;
+
+    error_log /var/log/nginx/error.log;
+    access_log /var/log/nginx/access.log combined;
+
+    location /ws {
+        proxy_pass http://localhost:9001;
+        proxy_http_version 1.1;
+        proxy_set_header Upgrade $http_upgrade;
+        proxy_set_header Connection "Upgrade";
+        proxy_set_header Host $host;
+    }
+
+    location /mqtt {
+        proxy_pass http://localhost:9001;
+        proxy_http_version 1.1;
+        proxy_set_header Upgrade $http_upgrade;
+        proxy_set_header Connection "Upgrade";
+        proxy_set_header Host $host;
+    }
+
+    location /openWB/ {
+        allow all;
+        try_files $uri $uri/ /index.php?$args;
+        index index.php index.html index.htm;
+    }
+
+    location /openWB/ramdisk/ {
+        autoindex on;
+    }
+
+    location /openWB/data/backup/ {
+        autoindex on;
+    }
+
+    location ~ \.php$ {
+        include snippets/fastcgi-php.conf;
+        fastcgi_pass unix:PHP_FPM_SOCK;
+        fastcgi_param SCRIPT_FILENAME $document_root$fastcgi_script_name;
+        include fastcgi_params;
+    }
+
+    location ~ /\. {
+        deny all;
+    }
+}
+EOF
+
+# Ersetze PHP_FPM_SOCK mit dem korrekten Wert
+sed -i "s|fastcgi_pass unix:PHP_FPM_SOCK;|fastcgi_pass unix:$PHP_FPM_SOCK;|" /etc/nginx/sites-available/openwb-ssl
+
+# Aktiviere die Nginx-Konfiguration
+ln -sf /etc/nginx/sites-available/openwb-ssl /etc/nginx/sites-enabled/openwb-ssl
+rm -f /etc/nginx/sites-enabled/default
 echo "done"
-echo -n "fix upload limit..."
-if [ -d "/etc/php/7.3/" ]; then
-    echo "upload_max_filesize = 300M" > /etc/php/7.3/apache2/conf.d/20-uploadlimit.ini
-    echo "post_max_size = 300M" >> /etc/php/7.3/apache2/conf.d/20-uploadlimit.ini
-    echo "done (PHP 7.3 - OS Buster)"
-elif [ -d "/etc/php/7.4/" ]; then
-    echo "upload_max_filesize = 300M" > /etc/php/7.4/apache2/conf.d/20-uploadlimit.ini
-    echo "post_max_size = 300M" >> /etc/php/7.4/apache2/conf.d/20-uploadlimit.ini
+
+# Setze Upload-Limit für PHP
+echo -n "Setze PHP Upload-Limit..."
+if [[ "$DEBIAN_VERSION" == "11" && -d "/etc/php/7.4/" ]]; then
+    echo "upload_max_filesize = 300M" > /etc/php/7.4/fpm/conf.d/20-uploadlimit.ini
+    echo "post_max_size = 300M" >> /etc/php/7.4/fpm/conf.d/20-uploadlimit.ini
     echo "done (PHP 7.4 - OS Bullseye)"
-elif [ -d "/etc/php/8.2/" ]; then
-    echo "upload_max_filesize = 300M" > /etc/php/8.2/apache2/conf.d/20-uploadlimit.ini
-    echo "post_max_size = 300M" >> /etc/php/8.2/apache2/conf.d/20-uploadlimit.ini
+elif [[ "$DEBIAN_VERSION" == "12" && -d "/etc/php/8.2/" ]]; then
+    echo "upload_max_filesize = 300M" > /etc/php/8.2/fpm/conf.d/20-uploadlimit.ini
+    echo "post_max_size = 300M" >> /etc/php/8.2/fpm/conf.d/20-uploadlimit.ini
     echo "done (PHP 8.2 - OS Bookworm)"
-elif [ -d "/etc/php/8.3/" ]; then
-    echo "upload_max_filesize = 300M" > /etc/php/8.3/apache2/conf.d/20-uploadlimit.ini
-    echo "post_max_size = 300M" >> /etc/php/8.3/apache2/conf.d/20-uploadlimit.ini
-    echo "done (PHP 8.3 - OS Trixie)"
-elif [ -d "/etc/php/8.4/" ]; then
-    echo "upload_max_filesize = 300M" > /etc/php/8.4/apache2/conf.d/20-uploadlimit.ini
-    echo "post_max_size = 300M" >> /etc/php/8.4/apache2/conf.d/20-uploadlimit.ini
-    echo "done (PHP 8.4 - OS Sid or later)"
+elif [[ "$DEBIAN_VERSION" == "13" || "$DEBIAN_VERSION" == "14" || "$DEBIAN_VERSION" == "unstable" ]] && [ -d "/etc/php/8.3/" ]; then
+    echo "upload_max_filesize = 300M" > /etc/php/8.3/fpm/conf.d/20-uploadlimit.ini
+    echo "post_max_size = 300M" >> /etc/php/8.3/fpm/conf.d/20-uploadlimit.ini
+    echo "done (PHP 8.3 - OS Trixie/Sid)"
 else
     echo "Fehler: Keine unterstützte PHP-Version gefunden, überspringe Upload-Limit-Konfiguration"
 fi
-echo -n "enabling apache ssl module..."
-a2enmod ssl >/dev/null 2>&1 || true
-a2enmod proxy_wstunnel >/dev/null 2>&1 || true
-a2dissite default-ssl >/dev/null 2>&1 || true
-cp "${OPENWBBASEDIR}/data/config/apache/apache-openwb-ssl.conf" /etc/apache2/sites-available/
-a2ensite apache-openwb-ssl >/dev/null 2>&1 || true
-echo "done"
-echo -n "restarting apache..."
-systemctl restart apache2
+
+# Starte Nginx und PHP-FPM
+echo -n "Starte Nginx und PHP-FPM..."
+systemctl enable nginx
+systemctl enable php${PYTHON_VERSION}-fpm
+systemctl restart nginx
+systemctl restart php${PYTHON_VERSION}-fpm
 echo "done"
 
 # Erstelle virtuelle Umgebung
@@ -387,6 +457,33 @@ if $USE_VENV; then
         fi
     fi
     echo "pip erfolgreich in der virtuellen Umgebung installiert."
+
+    # Verlinke venv-Binaries direkt nach /bin (ohne Suffix)
+    echo "Verlinke virtuelle Umgebung Binaries direkt nach /bin..."
+    echo "Warnung: Bestehende System-Binaries in /bin werden überschrieben. Dies kann andere Skripte oder Dienste beeinflussen."
+    for binary in python python3 pip pip3; do
+        if [ -f "$VENV_DIR/bin/$binary" ]; then
+            ln -sf "$VENV_DIR/bin/$binary" "/bin/$binary"
+            if [ $? -eq 0 ]; then
+                echo "Erfolgreich verlinkt: /bin/$binary -> $VENV_DIR/bin/$binary"
+            else
+                echo "Fehler: Konnte /bin/$binary nicht verlinken."
+                exit 1
+            fi
+        else
+            echo "Fehler: Binary $binary nicht in $VENV_DIR/bin gefunden, Verlinkung abgebrochen."
+            exit 1
+        fi
+    done
+
+    # Prüfe, ob die verlinkten Binaries funktionieren
+    for binary in python python3 pip pip3; do
+        if ! "/bin/$binary" --version >/dev/null 2>&1; then
+            echo "Fehler: Verlinktes Binary /bin/$binary funktioniert nicht."
+            exit 1
+        fi
+    done
+    echo "Alle venv-Binaries erfolgreich nach /bin verlinkt und geprüft."
 else
     PYTHON_EXEC="/usr/bin/python3"
     PIP_EXEC="/usr/bin/pip3"
@@ -400,11 +497,11 @@ if ! command -v python3 >/dev/null || ! command -v python >/dev/null; then
 fi
 SYSTEM_PYTHON3=$(readlink -f $(which python3))
 SYSTEM_PYTHON=$(readlink -f $(which python))
-if [[ "$SYSTEM_PYTHON3" != "$(readlink -f /usr/bin/python3)" ]]; then
-    echo "Warnung: /usr/bin/python3 unterscheidet sich von der System-python3-Binary."
+if [[ "$SYSTEM_PYTHON3" != "$(readlink -f /bin/python3)" ]]; then
+    echo "Warnung: /bin/python3 unterscheidet sich von der System-python3-Binary."
 fi
-if [[ "$SYSTEM_PYTHON" != "$(readlink -f /usr/bin/python3)" ]]; then
-    echo "Warnung: /usr/bin/python3 unterscheidet sich von der System-python-Binary."
+if [[ "$SYSTEM_PYTHON" != "$(readlink -f /bin/python3)" ]]; then
+    echo "Warnung: /bin/python3 unterscheidet sich von der System-python-Binary."
 fi
 
 # Prüfe pip-Version
