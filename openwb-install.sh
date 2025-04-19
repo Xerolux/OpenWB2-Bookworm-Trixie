@@ -140,12 +140,30 @@ if [[ "$DEBIAN_VERSION" == "12" || "$DEBIAN_VERSION" == "13" || "$DEBIAN_VERSION
     echo "Build-Tools und python3-dev erfolgreich installiert."
 fi
 
-# Installiere libxml2, libxslt und Entwicklungspakete für Debian 12, 13, 14 und höher
+# Installiere libxml2, libxslt und Entwicklungspakete für Debian 12, 13 und höher
 if [[ "$DEBIAN_VERSION" =~ ^[0-9]+$ ]] && [[ "$DEBIAN_VERSION" -ge 12 ]]; then
     echo "Installiere libxml2, libxslt und Entwicklungspakete für Debian $DEBIAN_VERSION..."
     apt-get install -y libxml2 libxslt1.1 libxml2-dev libxslt1-dev
     echo "libxml2, libxslt und Entwicklungspakete erfolgreich installiert."
 fi
+
+# Installiere python3-venv und version-spezifische venv-Pakete
+echo "Installiere python3-venv und version-spezifische Abhängigkeiten..."
+apt-get update
+apt-get install -y python3-venv
+
+# Erkenne die Python-Version und installiere das entsprechende venv-Paket
+PYTHON_VERSION=$(/usr/bin/python3 --version | cut -d' ' -f2 | cut -d'.' -f1,2)
+PYTHON_VENV_PKG="python${PYTHON_VERSION}-venv"
+if [[ "$DEBIAN_VERSION" == "12" || "$DEBIAN_VERSION" == "13" || "$DEBIAN_VERSION" == "unstable" ]]; then
+    echo "Installiere $PYTHON_VENV_PKG für Debian $DEBIAN_VERSION..."
+    apt-get install -y "$PYTHON_VENV_PKG"
+    if [ $? -ne 0 ]; then
+        echo "Fehler: Konnte $PYTHON_VENV_PKG nicht installieren. Überprüfe die Paketquellen."
+        exit 1
+    fi
+fi
+echo "python3-venv und $PYTHON_VENV_PKG erfolgreich installiert."
 
 # Installiere Netzwerk- und Firewall-Pakete
 echo "Installiere Netzwerk- und Firewall-Pakete..."
@@ -273,16 +291,17 @@ else
     echo "Fehler: Keine unterstützte PHP-Version gefunden, überspringe Upload-Limit-Konfiguration"
 fi
 echo -n "enabling apache ssl module..."
-a2enmod ssl
-a2enmod proxy_wstunnel
-a2dissite default-ssl 2>/dev/null || true
+a2enmod ssl >/dev/null 2>&1 || true
+a2enmod proxy_wstunnel >/dev/null 2>&1 || true
+a2dissite default-ssl >/dev/null 2>&1 || true
 cp "${OPENWBBASEDIR}/data/config/apache/apache-openwb-ssl.conf" /etc/apache2/sites-available/
-a2ensite apache-openwb-ssl
+a2ensite apache-openwb-ssl >/dev/null 2>&1 || true
 echo "done"
 echo -n "restarting apache..."
 systemctl restart apache2
 echo "done"
 
+# Erstelle virtuelle Umgebung
 if [[ "$DEBIAN_VERSION" == "12" || "$DEBIAN_VERSION" == "13" || "$DEBIAN_VERSION" == "unstable" ]]; then
     USE_VENV=true
 else
@@ -293,16 +312,31 @@ if $USE_VENV; then
     if [ ! -d "$VENV_DIR" ]; then
         echo "Erstelle virtuelle Umgebung in ${VENV_DIR}..."
         sudo -u "$OPENWB_USER" /usr/bin/python3 -m venv "$VENV_DIR"
+        if [ $? -ne 0 ]; then
+            echo "Fehler: Konnte virtuelle Umgebung nicht erstellen. Überprüfe Python und python3-venv Installation."
+            exit 1
+        fi
         echo "Virtuelle Umgebung erfolgreich erstellt."
     fi
     PYTHON_EXEC="$VENV_DIR/bin/python"
     PIP_EXEC="$VENV_DIR/bin/pip"
+    # Prüfe, ob pip im Venv existiert
+    if [ ! -f "$PIP_EXEC" ]; then
+        echo "Fehler: pip nicht in der virtuellen Umgebung gefunden ($PIP_EXEC). Versuche, pip zu installieren..."
+        sudo -u "$OPENWB_USER" "$PYTHON_EXEC" -m ensurepip --upgrade
+        sudo -u "$OPENWB_USER" "$PYTHON_EXEC" -m pip install --upgrade pip
+        if [ ! -f "$PIP_EXEC" ]; then
+            echo "Fehler: Konnte pip nicht in der virtuellen Umgebung installieren."
+            exit 1
+        fi
+    fi
 else
     PYTHON_EXEC="/usr/bin/python3"
     PIP_EXEC="/usr/bin/pip3"
 fi
 
-echo "installing python requirements..."
+# Installiere Python-Abhängigkeiten
+echo "Installiere Python-Abhängigkeiten..."
 if $USE_VENV; then
     sudo -u "$OPENWB_USER" "$PIP_EXEC" install --upgrade pip
     if [[ "$DEBIAN_VERSION" == "12" || "$DEBIAN_VERSION" == "13" || "$DEBIAN_VERSION" == "unstable" ]]; then
