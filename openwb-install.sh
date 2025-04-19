@@ -46,6 +46,9 @@ if [ -f /etc/os-release ]; then
         "trixie")
             DEBIAN_VERSION="13"
             ;;
+        "forky")  # Annahme für Debian 14
+            DEBIAN_VERSION="14"
+            ;;
         "sid")
             DEBIAN_VERSION="unstable"
             ;;
@@ -71,6 +74,10 @@ if [[ "$DEBIAN_VERSION" == "unknown" && -f /etc/debian_version ]]; then
             DEBIAN_VERSION="13"
             DEBIAN_CODENAME="trixie"
             ;;
+        "14"|"14."*)
+            DEBIAN_VERSION="14"
+            DEBIAN_CODENAME="forky"  # Annahme für Debian 14
+            ;;
         "trixie/sid")
             DEBIAN_VERSION="13"
             DEBIAN_CODENAME="trixie"
@@ -88,7 +95,7 @@ fi
 # Fehler, wenn keine Version erkannt wurde
 if [[ "$DEBIAN_VERSION" == "unknown" ]]; then
     echo "Fehler: Debian-Version konnte nicht erkannt werden."
-    echo "Unterstützte Versionen: Debian 11 (Bullseye), 12 (Bookworm), 13 (Trixie), Unstable (Sid)"
+    echo "Unterstützte Versionen: Debian 11 (Bullseye), 12 (Bookworm), 13 (Trixie), 14 (Forky), Unstable (Sid)"
     exit 1
 fi
 
@@ -132,15 +139,15 @@ if [ $? -ne 0 ]; then
     bash ./install_packages.sh
 fi
 
-# Installiere Build-Tools und python3-dev für Debian 12, 13 und unstable
-if [[ "$DEBIAN_VERSION" == "12" || "$DEBIAN_VERSION" == "13" || "$DEBIAN_VERSION" == "unstable" ]]; then
+# Installiere Build-Tools und python3-dev für Debian 12, 13, 14 und unstable
+if [[ "$DEBIAN_VERSION" == "12" || "$DEBIAN_VERSION" == "13" || "$DEBIAN_VERSION" == "14" || "$DEBIAN_VERSION" == "unstable" ]]; then
     echo "Installiere Build-Tools und python3-dev für Debian $DEBIAN_VERSION..."
     apt-get update
     apt-get install -y autoconf automake build-essential libtool python3-dev
     echo "Build-Tools und python3-dev erfolgreich installiert."
 fi
 
-# Installiere libxml2, libxslt und Entwicklungspakete für Debian 12, 13 und höher
+# Installiere libxml2, libxslt und Entwicklungspakete für Debian 12, 13, 14 und höher
 if [[ "$DEBIAN_VERSION" =~ ^[0-9]+$ ]] && [[ "$DEBIAN_VERSION" -ge 12 ]]; then
     echo "Installiere libxml2, libxslt und Entwicklungspakete für Debian $DEBIAN_VERSION..."
     apt-get install -y libxml2 libxslt1.1 libxml2-dev libxslt1-dev
@@ -155,7 +162,7 @@ apt-get install -y python3-venv
 # Erkenne die Python-Version und installiere das entsprechende venv-Paket
 PYTHON_VERSION=$(/usr/bin/python3 --version | cut -d' ' -f2 | cut -d'.' -f1,2)
 PYTHON_VENV_PKG="python${PYTHON_VERSION}-venv"
-if [[ "$DEBIAN_VERSION" == "12" || "$DEBIAN_VERSION" == "13" || "$DEBIAN_VERSION" == "unstable" ]]; then
+if [[ "$DEBIAN_VERSION" == "12" || "$DEBIAN_VERSION" == "13" || "$DEBIAN_VERSION" == "14" || "$DEBIAN_VERSION" == "unstable" ]]; then
     echo "Installiere $PYTHON_VENV_PKG für Debian $DEBIAN_VERSION..."
     apt-get install -y "$PYTHON_VENV_PKG"
     if [ $? -ne 0 ]; then
@@ -178,7 +185,7 @@ echo "Installiere Netzwerk- und Firewall-Pakete..."
 apt-get install -y iptables dhcpcd5 dnsmasq
 echo "Netzwerk- und Firewall-Pakete erfolgreich installiert."
 
-# Warnung für Debian 12, 13 und unstable
+# Warnung für Debian 12, 13, 14 und unstable
 show_warning() {
     echo "*******************************************************************"
     echo "* ACHTUNG / WARNING *"
@@ -196,7 +203,7 @@ show_warning() {
     sleep 10
 }
 
-if [[ "$DEBIAN_VERSION" == "12" || "$DEBIAN_VERSION" == "13" || "$DEBIAN_VERSION" == "unstable" ]]; then
+if [[ "$DEBIAN_VERSION" == "12" || "$DEBIAN_VERSION" == "13" || "$DEBIAN_VERSION" == "14" || "$DEBIAN_VERSION" == "unstable" ]]; then
     show_warning
 fi
 
@@ -310,8 +317,9 @@ systemctl restart apache2
 echo "done"
 
 # Erstelle virtuelle Umgebung
-if [[ "$DEBIAN_VERSION" == "12" || "$DEBIAN_VERSION" == "13" || "$DEBIAN_VERSION" == "unstable" ]]; then
+if [[ "$DEBIAN_VERSION" == "11" || "$DEBIAN_VERSION" == "12" || "$DEBIAN_VERSION" == "13" || "$DEBIAN_VERSION" == "14" || "$DEBIAN_VERSION" == "unstable" ]]; then
     USE_VENV=true
+    echo "Verwende virtuelle Umgebung für Debian $DEBIAN_VERSION, um Konsistenz zu gewährleisten."
 else
     USE_VENV=false
 fi
@@ -360,7 +368,6 @@ if $USE_VENV; then
             fi
         else
             echo "ensurepip nicht verfügbar, lade pip manuell herunter..."
-            # Fallback: Lade get-pip.py herunter und installiere pip
             TEMP_PIP_SCRIPT="/tmp/get-pip.py"
             if curl -s https://bootstrap.pypa.io/get-pip.py -o "$TEMP_PIP_SCRIPT"; then
                 if ! sudo -u "$OPENWB_USER" "$PYTHON_EXEC" "$TEMP_PIP_SCRIPT"; then
@@ -385,6 +392,60 @@ else
     PIP_EXEC="/usr/bin/pip3"
 fi
 
+# Prüfe System-Binaries
+echo "Prüfe Konsistenz der Python- und pip-Binaries..."
+if ! command -v python3 >/dev/null || ! command -v python >/dev/null; then
+    echo "Fehler: python oder python3 nicht im System gefunden."
+    exit 1
+fi
+SYSTEM_PYTHON3=$(readlink -f $(which python3))
+SYSTEM_PYTHON=$(readlink -f $(which python))
+if [[ "$SYSTEM_PYTHON3" != "$(readlink -f /usr/bin/python3)" ]]; then
+    echo "Warnung: /usr/bin/python3 unterscheidet sich von der System-python3-Binary."
+fi
+if [[ "$SYSTEM_PYTHON" != "$(readlink -f /usr/bin/python3)" ]]; then
+    echo "Warnung: /usr/bin/python3 unterscheidet sich von der System-python-Binary."
+fi
+
+# Prüfe pip-Version
+SYSTEM_PIP3=$(pip3 --version | grep -o 'pip [0-9.]*' | awk '{print $2}' 2>/dev/null)
+if [ -f "$PIP_EXEC" ]; then
+    VENV_PIP=$("$PIP_EXEC" --version | grep -o 'pip [0-9.]*' | awk '{print $2}')
+    if [[ "$SYSTEM_PIP3" != "$VENV_PIP" ]]; then
+        echo "Warnung: pip-Version in venv ($VENV_PIP) unterscheidet sich von System-pip3 ($SYSTEM_PIP3)."
+    fi
+fi
+
+# Funktion zum Aktualisieren der requirements.txt
+update_requirements() {
+    echo "Aktualisiere requirements.txt, behalte pymodbus-Version bei..."
+    REQUIREMENTS_FILE="${OPENWBBASEDIR}/requirements.txt"
+    BACKUP_FILE="${OPENWBBASEDIR}/requirements.txt.bak"
+    cp "$REQUIREMENTS_FILE" "$BACKUP_FILE"
+    PYMODBUS_LINE=$(grep '^pymodbus==' "$REQUIREMENTS_FILE")
+    sudo -u "$OPENWB_USER" "$PIP_EXEC" install --upgrade -r "$REQUIREMENTS_FILE"
+    sudo -u "$OPENWB_USER" "$PIP_EXEC" freeze > "$TEMP_REQ"
+    if [ -n "$PYMODBUS_LINE" ]; then
+        sed -i "/^pymodbus==/d" "$TEMP_REQ"
+        echo "$PYMODBUS_LINE" >> "$TEMP_REQ"
+    fi
+    mv "$TEMP_REQ" "$REQUIREMENTS_FILE"
+    echo "requirements.txt aktualisiert, pymodbus-Version beibehalten."
+}
+
+# Prüfe installierte Abhängigkeiten
+check_requirements() {
+    echo "Prüfe, ob alle Abhängigkeiten installiert wurden..."
+    while IFS= read -r line; do
+        package=$(echo "$line" | cut -d'=' -f1)
+        if ! sudo -u "$OPENWB_USER" "$PIP_EXEC" show "$package" > /dev/null; then
+            echo "Fehler: Paket $package konnte nicht installiert werden."
+            exit 1
+        fi
+    done < "${OPENWBBASEDIR}/requirements.txt"
+    echo "Alle Abhängigkeiten erfolgreich installiert."
+}
+
 # Installiere Python-Abhängigkeiten
 echo "Installiere Python-Abhängigkeiten..."
 if $USE_VENV; then
@@ -392,23 +453,20 @@ if $USE_VENV; then
         echo "Fehler: Konnte pip nicht aktualisieren."
         exit 1
     fi
-    if [[ "$DEBIAN_VERSION" == "12" || "$DEBIAN_VERSION" == "13" || "$DEBIAN_VERSION" == "unstable" ]]; then
-        echo "Für Debian $DEBIAN_VERSION: Installiere Abhängigkeiten aus requirements.txt zusammen mit der neuesten Version von jq..."
-        sudo -u "$OPENWB_USER" bash -c "grep -v '^jq' ${OPENWBBASEDIR}/requirements.txt > $TEMP_REQ"
-        sudo -u "$OPENWB_USER" bash -c "echo 'jq' >> $TEMP_REQ"
-        if ! sudo -u "$OPENWB_USER" "$PIP_EXEC" install -r "$TEMP_REQ"; then
-            echo "Fehler: Konnte Python-Abhängigkeiten aus $TEMP_REQ nicht installieren."
+    if [[ "$DEBIAN_VERSION" == "12" || "$DEBIAN_VERSION" == "13" || "$DEBIAN_VERSION" == "14" || "$DEBIAN_VERSION" == "unstable" ]]; then
+        echo "Für Debian $DEBIAN_VERSION: Aktualisiere Abhängigkeiten und installiere..."
+        update_requirements
+        if ! sudo -u "$OPENWB_USER" "$PIP_EXEC" install -r "${OPENWBBASEDIR}/requirements.txt"; then
+            echo "Fehler: Konnte Python-Abhängigkeiten aus requirements.txt nicht installieren."
             exit 1
         fi
-        if ! sudo -u "$OPENWB_USER" "$PIP_EXEC" show jq > /dev/null; then
-            echo "Fehler: Python-Paket jq konnte nicht installiert werden. Überprüfe die requirements.txt und die Netzwerkverbindung."
-            exit 1
-        fi
+        check_requirements
     else
         if ! sudo -u "$OPENWB_USER" "$PIP_EXEC" install -r "${OPENWBBASEDIR}/requirements.txt"; then
             echo "Fehler: Konnte Python-Abhängigkeiten aus requirements.txt nicht installieren."
             exit 1
         fi
+        check_requirements
     fi
 else
     if ! sudo -u "$OPENWB_USER" "$PIP_EXEC" install --user --upgrade pip; then
@@ -419,6 +477,7 @@ else
         echo "Fehler: Konnte Python-Abhängigkeiten für den Benutzer installieren."
         exit 1
     fi
+    check_requirements
 fi
 
 echo "installing openwb2 system service..."
@@ -460,11 +519,15 @@ find "/home/$OPENWB_USER/.local" -type f -name "*.pyc" -delete
 find "/home/$OPENWB_USER/.local" -type f -name "*.pyo" -delete
 echo "Python-Cache erfolgreich gelöscht."
 
-# Speicheroptimierungen
-echo "vm.swappiness=10" > /etc/sysctl.d/99-openwb.conf
-echo "vm.vfs_cache_pressure=200" >> /etc/sysctl.d/99-openwb.conf
-sysctl -p /etc/sysctl.d/99-openwb.conf
-echo "Speicheroptimierungen (Swappiness, VFS Cache) angewendet."
+# Speicheroptimierungen (nur auf Raspberry Pi)
+if [ -f /proc/device-tree/model ] && grep -q "Raspberry Pi" /proc/device-tree/model; then
+    echo "vm.swappiness=10" > /etc/sysctl.d/99-openwb.conf
+    echo "vm.vfs_cache_pressure=200" >> /etc/sysctl.d/99-openwb.conf
+    sysctl -p /etc/sysctl.d/99-openwb.conf
+    echo "Speicheroptimierungen (Swappiness, VFS Cache) angewendet (nur Raspberry Pi)."
+else
+    echo "Kein Raspberry Pi erkannt, überspringe Speicheroptimierungen."
+fi
 
 # Journal-Logs bereinigen
 journalctl --vacuum-time=7d
