@@ -159,11 +159,19 @@ if [[ "$DEBIAN_VERSION" == "12" || "$DEBIAN_VERSION" == "13" || "$DEBIAN_VERSION
     echo "Installiere $PYTHON_VENV_PKG für Debian $DEBIAN_VERSION..."
     apt-get install -y "$PYTHON_VENV_PKG"
     if [ $? -ne 0 ]; then
-        echo "Fehler: Konnte $PYTHON_VENV_PKG nicht installieren. Überprüfe die -y python3-venv python${PYTHON_VERSION}-venv nicht installiert. Überprüfe die Paketquellen."
+        echo "Fehler: Konnte $PYTHON_VENV_PKG nicht installieren. Überprüfe die Paketquellen."
         exit 1
     fi
 fi
 echo "python3-venv und $PYTHON_VENV_PKG erfolgreich installiert."
+
+# Prüfe, ob das venv-Modul verfügbar ist
+echo "Prüfe Verfügbarkeit des venv-Moduls..."
+if ! /usr/bin/python3 -m venv --help >/dev/null 2>&1; then
+    echo "Fehler: Das Python venv-Modul ist nicht verfügbar. Überprüfe die Installation von python3-venv und $PYTHON_VENV_PKG."
+    exit 1
+fi
+echo "venv-Modul ist verfügbar."
 
 # Installiere Netzwerk- und Firewall-Pakete
 echo "Installiere Netzwerk- und Firewall-Pakete..."
@@ -315,10 +323,21 @@ if $USE_VENV; then
         rm -rf "$VENV_DIR"
     fi
 
+    # Stelle sicher, dass das Verzeichnis für die virtuelle Umgebung existiert und die richtigen Berechtigungen hat
+    mkdir -p "$OPENWBBASEDIR"
+    chown "$OPENWB_USER:$OPENWB_GROUP" "$OPENWBBASEDIR"
+
     echo "Erstelle virtuelle Umgebung in ${VENV_DIR}..."
-    sudo -u "$OPENWB_USER" /usr/bin/python3 -m venv "$VENV_DIR"
-    if [ $? -ne 0 ]; then
-        echo "Fehler: Konnte virtuelle Umgebung nicht erstellen. Überprüfe Python und python3-venv Installation."
+    if ! sudo -u "$OPENWB_USER" /usr/bin/python3 -m venv "$VENV_DIR"; then
+        echo "Fehler: Konnte virtuelle Umgebung nicht erstellen. Details:"
+        sudo -u "$OPENWB_USER" /usr/bin/python3 -m venv "$VENV_DIR" 2>&1
+        echo "Überprüfe Python-Version, python3-venv Installation und Berechtigungen."
+        exit 1
+    fi
+
+    # Prüfe, ob die virtuelle Umgebung erstellt wurde
+    if [ ! -d "$VENV_DIR" ] || [ ! -f "$VENV_DIR/bin/python" ]; then
+        echo "Fehler: Virtuelle Umgebung wurde nicht korrekt erstellt. Verzeichnis oder Python-Binary fehlt."
         exit 1
     fi
     echo "Virtuelle Umgebung erfolgreich erstellt."
@@ -328,20 +347,25 @@ if $USE_VENV; then
 
     # Prüfe, ob pip im Venv existiert
     if [ ! -f "$PIP_EXEC" ]; then
-        echo "Fehler: pip nicht in der virtuellen Umgebung gefunden ($PIP_EXEC). Versuche, pip zu installieren..."
+        echo "Warnung: pip nicht in der virtuellen Umgebung gefunden ($PIP_EXEC). Versuche, pip zu installieren..."
 
         # Prüfe, ob ensurepip verfügbar ist
         if sudo -u "$OPENWB_USER" "$PYTHON_EXEC" -c "import ensurepip" 2>/dev/null; then
             echo "Verwende ensurepip, um pip zu installieren..."
-            sudo -u "$OPENWB_USER" "$PYTHON_EXEC" -m ensurepip --upgrade
-            sudo -u "$OPENWB_USER" "$PYTHON_EXEC" -m pip install --upgrade pip
+            if ! sudo -u "$OPENWB_USER" "$PYTHON_EXEC" -m ensurepip --upgrade; then
+                echo "Fehler: ensurepip konnte pip nicht installieren."
+            fi
+            if ! sudo -u "$OPENWB_USER" "$PYTHON_EXEC" -m pip install --upgrade pip; then
+                echo "Fehler: Konnte pip nicht aktualisieren."
+            fi
         else
             echo "ensurepip nicht verfügbar, lade pip manuell herunter..."
             # Fallback: Lade get-pip.py herunter und installiere pip
             TEMP_PIP_SCRIPT="/tmp/get-pip.py"
-            curl -s https://bootstrap.pypa.io/get-pip.py -o "$TEMP_PIP_SCRIPT"
-            if [ -f "$TEMP_PIP_SCRIPT" ]; then
-                sudo -u "$OPENWB_USER" "$PYTHON_EXEC" "$TEMP_PIP_SCRIPT"
+            if curl -s https://bootstrap.pypa.io/get-pip.py -o "$TEMP_PIP_SCRIPT"; then
+                if ! sudo -u "$OPENWB_USER" "$PYTHON_EXEC" "$TEMP_PIP_SCRIPT"; then
+                    echo "Fehler: get-pip.py konnte pip nicht installieren."
+                fi
                 rm -f "$TEMP_PIP_SCRIPT"
             else
                 echo "Fehler: Konnte get-pip.py nicht herunterladen."
@@ -364,27 +388,37 @@ fi
 # Installiere Python-Abhängigkeiten
 echo "Installiere Python-Abhängigkeiten..."
 if $USE_VENV; then
-    sudo -u "$OPENWB_USER" "$PIP_EXEC" install --upgrade pip
+    if ! sudo -u "$OPENWB_USER" "$PIP_EXEC" install --upgrade pip; then
+        echo "Fehler: Konnte pip nicht aktualisieren."
+        exit 1
+    fi
     if [[ "$DEBIAN_VERSION" == "12" || "$DEBIAN_VERSION" == "13" || "$DEBIAN_VERSION" == "unstable" ]]; then
         echo "Für Debian $DEBIAN_VERSION: Installiere Abhängigkeiten aus requirements.txt zusammen mit der neuesten Version von jq..."
         sudo -u "$OPENWB_USER" bash -c "grep -v '^jq' ${OPENWBBASEDIR}/requirements.txt > $TEMP_REQ"
         sudo -u "$OPENWB_USER" bash -c "echo 'jq' >> $TEMP_REQ"
-        sudo -u "$OPENWB_USER" "$PIP_EXEC" install -r "$TEMP_REQ"
+        if ! sudo -u "$OPENWB_USER" "$PIP_EXEC" install -r "$TEMP_REQ"; then
+            echo "Fehler: Konnte Python-Abhängigkeiten aus $TEMP_REQ nicht installieren."
+            exit 1
+        fi
         if ! sudo -u "$OPENWB_USER" "$PIP_EXEC" show jq > /dev/null; then
             echo "Fehler: Python-Paket jq konnte nicht installiert werden. Überprüfe die requirements.txt und die Netzwerkverbindung."
             exit 1
         fi
     else
-        sudo -u "$OPENWB_USER" "$PIP_EXEC" install -r "${OPENWBBASEDIR}/requirements.txt"
+        if ! sudo -u "$OPENWB_USER" "$PIP_EXEC" install -r "${OPENWBBASEDIR}/requirements.txt"; then
+            echo "Fehler: Konnte Python-Abhängigkeiten aus requirements.txt nicht installieren."
+            exit 1
+        fi
     fi
 else
-    sudo -u "$OPENWB_USER" "$PIP_EXEC" install --user --upgrade pip
-    sudo -u "$OPENWB_USER" "$PIP_EXEC" install --user -r "${OPENWBBASEDIR}/requirements.txt"
-fi
-
-if [ $? -ne 0 ]; then
-    echo "Fehler bei der Installation der Python-Abhängigkeiten. Überprüfe die requirements.txt und die Paketquellen."
-    exit 1
+    if ! sudo -u "$OPENWB_USER" "$PIP_EXEC" install --user --upgrade pip; then
+        echo "Fehler: Konnte systemweites pip nicht aktualisieren."
+        exit 1
+    fi
+    if ! sudo -u "$OPENWB_USER" "$PIP_EXEC" install --user -r "${OPENWBBASEDIR}/requirements.txt"; then
+        echo "Fehler: Konnte Python-Abhängigkeiten für den Benutzer installieren."
+        exit 1
+    fi
 fi
 
 echo "installing openwb2 system service..."
